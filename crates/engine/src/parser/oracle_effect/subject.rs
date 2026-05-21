@@ -487,29 +487,35 @@ fn try_parse_can_block_additional(
     text: &str,
     ctx: &mut ParseContext,
 ) -> Option<ParsedEffectClause> {
+    use nom::branch::alt;
+    use nom::bytes::complete::tag;
+    use nom::combinator::{eof, opt, value};
+    use nom::sequence::preceded;
+
     let lower = text.to_lowercase();
-    let tp = TextPair::new(text, &lower);
-    let pos = tp.find(" can block a")?;
-    // Must contain the "additional" pattern to distinguish from other "can block" text.
-    if !nom_primitives::scan_contains(&lower, "can block an additional")
-        && !nom_primitives::scan_contains(&lower, "can block any number")
-    {
-        return None;
-    }
-    let subject = text[..pos].trim();
-    let application = parse_subject_application(subject, ctx)?;
-    let duration = if lower.contains("this turn") {
-        Some(Duration::UntilEndOfTurn)
-    } else if lower.contains("this combat") {
-        Some(Duration::UntilEndOfCombat)
-    } else {
-        None
-    };
-    let mode = if nom_primitives::scan_contains(&lower, "can block any number") {
-        StaticMode::ExtraBlockers { count: None }
-    } else {
-        StaticMode::ExtraBlockers { count: Some(1) }
-    };
+    let (subject_lower, predicate_lower) =
+        nom_primitives::scan_split_at_phrase(&lower, |i| tag("can block ").parse(i))?;
+    let subject_text = &text[..subject_lower.len()];
+    let application = parse_subject_application(subject_text.trim(), ctx)?;
+
+    use nom::sequence::tuple;
+    type VE<'a> = OracleError<'a>;
+    let (_rest, (count, duration, _, _)) = tuple((
+        preceded(
+            tag::<_, _, VE>("can block "),
+            alt((
+                value(Some(1), tag::<_, _, VE>("an additional creature")),
+                value(None, tag::<_, _, VE>("any number of creatures")),
+            )),
+        ),
+        opt(alt((
+            value(Duration::UntilEndOfTurn, tag::<_, _, VE>(" this turn")),
+            value(Duration::UntilEndOfCombat, tag::<_, _, VE>(" this combat")),
+        ))),
+        opt(tag::<_, _, VE>(".")),
+        eof::<_, VE>,
+    )).parse(predicate_lower).ok()?;
+    let mode = StaticMode::ExtraBlockers { count };
     let affected = static_affected_for_application(&application);
     Some(ParsedEffectClause {
         effect: Effect::GenericEffect {
