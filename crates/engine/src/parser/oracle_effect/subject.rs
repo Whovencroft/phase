@@ -1,7 +1,7 @@
 use crate::parser::oracle_nom::error::OracleError;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
-use nom::combinator::{all_consuming, opt, value, verify};
+use nom::combinator::{all_consuming, map, opt, value, verify};
 use nom::sequence::preceded;
 use nom::Parser;
 
@@ -56,11 +56,7 @@ pub(super) fn try_parse_subject_predicate_ast(
         return Some(subject_predicate_ast_from_clause(
             text,
             clause,
-            |effect, duration, _sub_ability| PredicateAst::Continuous {
-                effect,
-                duration,
-                sub_ability: None,
-            },
+            |effect, duration, _sub_ability| PredicateAst::Restriction { effect, duration },
             ctx,
         ));
     }
@@ -487,34 +483,23 @@ fn try_parse_can_block_additional(
     text: &str,
     ctx: &mut ParseContext,
 ) -> Option<ParsedEffectClause> {
-    use nom::branch::alt;
-    use nom::bytes::complete::tag;
-    use nom::combinator::{eof, opt, value};
-    use nom::sequence::preceded;
-
     let lower = text.to_lowercase();
     let (subject_lower, predicate_lower) =
         nom_primitives::scan_split_at_phrase(&lower, |i| tag("can block ").parse(i))?;
     let subject_text = &text[..subject_lower.len()];
     let application = parse_subject_application(subject_text.trim(), ctx)?;
 
-    use nom::sequence::tuple;
-    type VE<'a> = OracleError<'a>;
-    let (_rest, (count, duration, _, _)) = tuple((
-        preceded(
-            tag::<_, _, VE>("can block "),
-            alt((
-                value(Some(1), tag::<_, _, VE>("an additional creature")),
-                value(None, tag::<_, _, VE>("any number of creatures")),
-            )),
-        ),
-        opt(alt((
-            value(Duration::UntilEndOfTurn, tag::<_, _, VE>(" this turn")),
-            value(Duration::UntilEndOfCombat, tag::<_, _, VE>(" this combat")),
-        ))),
-        opt(tag::<_, _, VE>(".")),
-        eof::<_, VE>,
-    )).parse(predicate_lower).ok()?;
+    let (_rest, (_, _, _, _, count, duration, _)) = all_consuming((
+        tag("can"),
+        tag(" "),
+        tag("block"),
+        tag(" "),
+        parse_extra_blockers_count,
+        parse_block_grant_duration,
+        opt(tag(".")),
+    ))
+    .parse(predicate_lower)
+    .ok()?;
     let mode = StaticMode::ExtraBlockers { count };
     let affected = static_affected_for_application(&application);
     Some(ParsedEffectClause {
@@ -533,6 +518,43 @@ fn try_parse_can_block_additional(
         optional: false,
         unless_pay: None,
     })
+}
+
+fn parse_extra_blockers_count(input: &str) -> OracleResult<'_, Option<u32>> {
+    alt((
+        map(
+            (
+                nom_primitives::parse_number,
+                tag(" additional creature"),
+                opt(tag("s")),
+            ),
+            |(count, _, _)| Some(count),
+        ),
+        value(
+            None,
+            (
+                tag("any"),
+                tag(" "),
+                tag("number"),
+                tag(" "),
+                tag("of"),
+                tag(" "),
+                tag("creatures"),
+            ),
+        ),
+    ))
+    .parse(input)
+}
+
+fn parse_block_grant_duration(input: &str) -> OracleResult<'_, Option<Duration>> {
+    opt(preceded(
+        tag(" this "),
+        alt((
+            value(Duration::UntilEndOfTurn, tag("turn")),
+            value(Duration::UntilEndOfCombat, tag("combat")),
+        )),
+    ))
+    .parse(input)
 }
 
 pub(super) fn parse_subject_application(
@@ -3239,6 +3261,43 @@ mod tests {
                     sd.mode,
                     StaticMode::ExtraBlockers { count: None },
                     "mode must be ExtraBlockers(None)"
+                );
+            }
+            other => panic!("expected GenericEffect, got {other:?}"),
+        }
+    }
+
+    /// CR 509.1a + CR 509.1b: combat-scoped blocking permissions expire at
+    /// end of combat, and numeric counts are parsed through the shared number
+    /// combinator rather than a one-card string branch.
+    #[test]
+    fn can_block_two_additional_creatures_this_combat_effect() {
+        let mut ctx = ParseContext {
+            card_name: Some("Test Card".to_string()),
+            ..Default::default()
+        };
+        let ability = crate::parser::oracle_effect::parse_effect_chain_with_context(
+            "~ can block two additional creatures this combat.",
+            AbilityKind::Activated,
+            &mut ctx,
+        );
+        match &*ability.effect {
+            Effect::GenericEffect {
+                static_abilities,
+                duration,
+                ..
+            } => {
+                assert_eq!(
+                    duration,
+                    &Some(Duration::UntilEndOfCombat),
+                    "duration must be UntilEndOfCombat"
+                );
+                assert_eq!(static_abilities.len(), 1);
+                let sd = &static_abilities[0];
+                assert_eq!(
+                    sd.mode,
+                    StaticMode::ExtraBlockers { count: Some(2) },
+                    "mode must be ExtraBlockers(2)"
                 );
             }
             other => panic!("expected GenericEffect, got {other:?}"),
