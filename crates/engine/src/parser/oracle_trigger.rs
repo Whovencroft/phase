@@ -5821,29 +5821,55 @@ fn try_parse_player_trigger(lower: &str) -> Option<(TriggerMode, TriggerDefiniti
         return Some((TriggerMode::Cycled, def));
     }
 
-    // CR 305.1 + CR 603.2 + CR 701.18a: "whenever a player plays a land
+        // CR 305.1 + CR 603.2 + CR 701.18a: "whenever a player plays a land
     // [from <zone>]" fires on the CR 305 special action. The optional
     // from-zone tail rides through `parse_type_phrase`, matching the existing
     // cast-spell trigger shape used by Rocco, Street Chef.
     if let Ok((_, (who, _))) = nom_primitives::split_once_on(lower, " plays a land") {
         let mut def = make_base();
         def.mode = TriggerMode::LandPlayed;
-
         if scan_contains(who, "opponent") {
             def.valid_target = Some(TargetFilter::Typed(
                 TypedFilter::default().controller(ControllerRef::Opponent),
             ));
         }
-
         let after_plays = &lower[who.len() + " plays a land".len()..].trim_start();
         let clause = nom_primitives::split_once_on(after_plays, ", ")
             .map(|(_, (before, _))| before)
             .unwrap_or(after_plays);
-        let (filter, _) = parse_type_phrase(clause);
-        if !matches!(filter, TargetFilter::Any) {
-            def.valid_card = Some(filter);
+        if !clause.is_empty() {
+            let (filter, _) = parse_type_phrase(clause);
+            if let TargetFilter::Typed(ref tf) = filter {
+                if tf.has_meaningful_type_constraint() {
+                    def.valid_card = Some(filter);
+                }
+            } else if !matches!(filter, TargetFilter::Any) {
+                def.valid_card = Some(filter);
+            }
         }
-
+        return Some((TriggerMode::LandPlayed, def));
+    }
+    // CR 305.1 + CR 603.2 + CR 701.18a: "whenever you play a land" (second person)
+    if let Ok((_, (who, _))) = nom_primitives::split_once_on(lower, " play a land") {
+        let mut def = make_base();
+        def.mode = TriggerMode::LandPlayed;
+        if scan_contains(who, "you") {
+            def.valid_target = Some(TargetFilter::Controller);
+        }
+        let after_plays = &lower[who.len() + " play a land".len()..].trim_start();
+        let clause = nom_primitives::split_once_on(after_plays, ", ")
+            .map(|(_, (before, _))| before)
+            .unwrap_or(after_plays);
+        if !clause.is_empty() {
+            let (filter, _) = parse_type_phrase(clause);
+            if let TargetFilter::Typed(ref tf) = filter {
+                if tf.has_meaningful_type_constraint() {
+                    def.valid_card = Some(filter);
+                }
+            } else if !matches!(filter, TargetFilter::Any) {
+                def.valid_card = Some(filter);
+            }
+        }
         return Some((TriggerMode::LandPlayed, def));
     }
 
@@ -17876,4 +17902,41 @@ mod snapshot_tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------------
+    // CR 305.1: "Whenever you play a land" — LandPlayed trigger parser
+    // -----------------------------------------------------------------------
+    #[test]
+    fn trigger_you_play_a_land() {
+        let def = parse_trigger_line(
+            "Whenever you play a land, draw a card.",
+            "The Endstone",
+        );
+        assert_eq!(def.mode, TriggerMode::LandPlayed);
+        assert!(
+            matches!(def.valid_target, Some(TargetFilter::Controller)),
+            "expected valid_target to be Controller, got {:?}",
+            def.valid_target
+        );
+        assert!(def.valid_card.is_none());
+    }
+
+    #[test]
+    fn trigger_you_play_a_land_from_exile() {
+        let def = parse_trigger_line(
+            "Whenever you play a land from exile, put a +1/+1 counter on ~.",
+            "Ghost-Spider",
+        );
+        assert_eq!(def.mode, TriggerMode::LandPlayed);
+        assert!(
+            matches!(def.valid_target, Some(TargetFilter::Controller)),
+            "expected valid_target to be Controller, got {:?}",
+            def.valid_target
+        );
+        assert!(
+            def.valid_card.is_some(),
+            "expected valid_card to be set for 'from exile'"
+        );
+    }
+
 }
