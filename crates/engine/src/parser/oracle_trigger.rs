@@ -4499,7 +4499,7 @@ fn try_parse_event(
         )))
         .parse(input)
     }
-    if let Ok((_, event)) = parse_simple_event.parse(rest) {
+    if let Ok((remaining, event)) = parse_simple_event.parse(rest) {
         let mut def = make_base();
         match event {
             SimpleEvent::BecomesBlocked => {
@@ -4602,14 +4602,26 @@ fn try_parse_event(
                 def.valid_card = Some(subject.clone());
             }
             SimpleEvent::Specializes => {
-                // CR ???: "When ~ specializes" — fires when a Specialize activation
-                // resolves and the source transforms into its colour-specific
-                // variant (Commander Legends: Battle for Baldur's Gate mechanic).
-                // `TriggerMode::Specializes` is registered in the trigger registry
-                // (currently mapped to `match_unimplemented` as a placeholder).
-                // `valid_card` records the subject (the permanent that specializes).
+                // CR ???: "When ~ specializes [from <zone>]" — fires when a Specialize
+                // activation resolves and the source transforms into its colour-
+                // specific variant (Commander Legends: Battle for Baldur's Gate).
+                // Some Karlach variants have zone qualifiers: "specializes from
+                // your graveyard" or "specializes from any zone".
                 def.mode = TriggerMode::Specializes;
                 def.valid_card = Some(subject.clone());
+                // Parse optional zone qualifier from remaining text.
+                let rem = remaining.trim();
+                if let Some(zone_text) = rem.strip_prefix("from ") {
+                    let zone_lower = zone_text.trim().to_lowercase();
+                    if zone_lower.starts_with("your graveyard") {
+                        def.origin = Some(Zone::Graveyard);
+                    } else if zone_lower.starts_with("your hand") {
+                        def.origin = Some(Zone::Hand);
+                    } else if zone_lower.starts_with("exile") {
+                        def.origin = Some(Zone::Exile);
+                    }
+                    // "from any zone" → no origin constraint (def.origin stays None)
+                }
             }
         }
         return Some((def.mode.clone(), def));
@@ -18018,6 +18030,45 @@ mod snapshot_tests {
         assert!(
             def.valid_card.is_some(),
             "expected valid_card to be set for specializes trigger"
+        );
+        assert_eq!(def.origin, None, "bare specializes should have no origin");
+    }
+    /// CR ???: "When this card specializes from your graveyard" — zone-qualified
+    /// specialize trigger (Karlach, Tiefling Punisher pattern). Parser must
+    /// preserve the zone qualifier as `def.origin = Some(Zone::Graveyard)`.
+    #[test]
+    fn trigger_specializes_from_graveyard() {
+        let def = parse_trigger_line(
+            "When this card specializes from your graveyard, return it from your graveyard to the battlefield.",
+            "Karlach, Tiefling Punisher",
+        );
+        assert_eq!(def.mode, TriggerMode::Specializes);
+        assert!(
+            def.valid_card.is_some(),
+            "expected valid_card to be set for specializes trigger"
+        );
+        assert_eq!(
+            def.origin,
+            Some(Zone::Graveyard),
+            "'from your graveyard' must set origin to Graveyard"
+        );
+    }
+    /// CR ???: "When this card specializes from any zone" — no zone constraint.
+    /// Parser must leave `def.origin` as `None` (matches from any zone).
+    #[test]
+    fn trigger_specializes_from_any_zone() {
+        let def = parse_trigger_line(
+            "When this card specializes from any zone, you may sacrifice a creature.",
+            "Karlach, Tiefling Punisher",
+        );
+        assert_eq!(def.mode, TriggerMode::Specializes);
+        assert!(
+            def.valid_card.is_some(),
+            "expected valid_card to be set for specializes trigger"
+        );
+        assert_eq!(
+            def.origin, None,
+            "'from any zone' must leave origin as None (no constraint)"
         );
     }
 }
