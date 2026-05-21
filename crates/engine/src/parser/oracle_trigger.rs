@@ -5814,7 +5814,15 @@ fn try_parse_player_trigger(lower: &str) -> Option<(TriggerMode, TriggerDefiniti
         return Some((TriggerMode::Cycled, def));
     }
 
-    if matches!(lower, "whenever you cycle a card" | "when you cycle a card") {
+    if matches!(
+        lower,
+        "whenever you cycle a card"
+            | "when you cycle a card"
+            | "whenever you cycle"
+            | "when you cycle"
+            | "whenever you cycle discard a card"
+            | "when you cycle discard a card"
+    ) {
         let mut def = make_base();
         def.mode = TriggerMode::Cycled;
         def.valid_target = Some(TargetFilter::Controller);
@@ -17875,5 +17883,27 @@ mod snapshot_tests {
                 "chain link {i} should be TriggeringSource, got {t:?}",
             );
         }
+    }
+
+    #[test]
+    fn trigger_you_cycle() {
+        let def = parse_trigger_line(
+            "Whenever you cycle, ~ gets +1/+0 until end of turn.",
+            "Flameblade Adept",
+        );
+        assert_eq!(def.mode, TriggerMode::Cycled);
+        assert_eq!(def.valid_target, Some(TargetFilter::Controller));
+        assert!(def.valid_card.is_none());
+    }
+
+    #[test]
+    fn trigger_you_cycle_discard_a_card() {
+        let def = parse_trigger_line(
+            "Whenever you cycle discard a card, ~ gets +1/+0 until end of turn.",
+            "Flameblade Adept",
+        );
+        assert_eq!(def.mode, TriggerMode::Cycled);
+        assert_eq!(def.valid_target, Some(TargetFilter::Controller));
+        assert!(def.valid_card.is_none());
     }
 }

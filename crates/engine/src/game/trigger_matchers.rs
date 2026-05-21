@@ -1684,8 +1684,13 @@ pub(super) fn match_cycled(
     source_id: ObjectId,
     state: &GameState,
 ) -> bool {
-    if let GameEvent::Cycled { object_id, .. } = event {
-        valid_card_matches(trigger, state, *object_id, source_id)
+    if let GameEvent::Cycled {
+        player_id,
+        object_id,
+    } = event
+    {
+        valid_player_matches(trigger, state, *player_id, source_id)
+            && valid_card_matches(trigger, state, *object_id, source_id)
     } else {
         false
     }
@@ -1700,8 +1705,16 @@ pub(super) fn match_cycled_or_discarded(
     state: &GameState,
 ) -> bool {
     match event {
-        GameEvent::Cycled { object_id, .. } | GameEvent::Discarded { object_id, .. } => {
-            valid_card_matches(trigger, state, *object_id, source_id)
+        GameEvent::Cycled {
+            player_id,
+            object_id,
+        }
+        | GameEvent::Discarded {
+            player_id,
+            object_id,
+        } => {
+            valid_player_matches(trigger, state, *player_id, source_id)
+                && valid_card_matches(trigger, state, *object_id, source_id)
         }
         _ => false,
     }
