@@ -4431,6 +4431,13 @@ fn try_parse_event(
         SaddlesOrCrews,
         Crews,
         Saddles,
+        // CR 701.37a: "When ~ becomes monstrous" — fires when the Monstrosity
+        // effect resolves and sets the monstrous designation on the source.
+        BecomesMonstrous,
+        // CR ???: "When ~ specializes" — fires when a Specialize activation
+        // resolves and transforms the card into its colour-specific variant
+        // (Commander Legends: Battle for Baldur's Gate mechanic).
+        Specializes,
     }
     fn parse_simple_event(input: &str) -> OracleResult<'_, SimpleEvent> {
         alt((
@@ -4480,6 +4487,15 @@ fn try_parse_event(
             // CR 702.171c: Actor-side saddle trigger (reserved — no cards today without
             // the compound, but the arm is ready for future printings).
             value(SimpleEvent::Saddles, tag("saddles a mount")),
+            // CR 701.37a: "becomes monstrous" — fires when Monstrosity N resolves
+            // and the monstrous designation is set. Canonical Oracle form is
+            // "When ~ becomes monstrous" (Kalemne's Captain, Keepsake Gorgon, etc.).
+            value(SimpleEvent::BecomesMonstrous, tag("becomes monstrous")),
+            // CR ???: "specializes" — fires when a Specialize activation resolves
+            // and the source transforms into its colour-specific variant.
+            // Canonical Oracle form is "When ~ specializes" (Wyll of the Blade Pact,
+            // Jaheira, Merciful Harper, Gut, Zealous Fanatic, etc.).
+            value(SimpleEvent::Specializes, tag("specializes")),
         )))
         .parse(input)
     }
@@ -4571,6 +4587,28 @@ fn try_parse_event(
                 // CR 702.122 + CR 702.171c: Compound actor-side trigger. Fires on
                 // either saddling a Mount or crewing a Vehicle.
                 def.mode = TriggerMode::SaddlesOrCrews;
+                def.valid_card = Some(subject.clone());
+            }
+            SimpleEvent::BecomesMonstrous => {
+                // CR 701.37a: "When ~ becomes monstrous" — fires when the
+                // Monstrosity effect resolves and sets the monstrous designation
+                // on the source permanent. The runtime matcher
+                // `match_become_monstrous` checks for
+                // `GameEvent::EffectResolved { kind: EffectKind::Monstrosity, .. }`
+                // with source_id matching the trigger source.
+                // `valid_card` records the subject (the permanent that becomes
+                // monstrous) so the matcher can filter correctly.
+                def.mode = TriggerMode::BecomeMonstrous;
+                def.valid_card = Some(subject.clone());
+            }
+            SimpleEvent::Specializes => {
+                // CR ???: "When ~ specializes" — fires when a Specialize activation
+                // resolves and the source transforms into its colour-specific
+                // variant (Commander Legends: Battle for Baldur's Gate mechanic).
+                // `TriggerMode::Specializes` is registered in the trigger registry
+                // (currently mapped to `match_unimplemented` as a placeholder).
+                // `valid_card` records the subject (the permanent that specializes).
+                def.mode = TriggerMode::Specializes;
                 def.valid_card = Some(subject.clone());
             }
         }
@@ -17875,5 +17913,111 @@ mod snapshot_tests {
                 "chain link {i} should be TriggeringSource, got {t:?}",
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // CR 701.37a: "When ~ becomes monstrous" — BecomesMonstrous trigger parser
+    // -----------------------------------------------------------------------
+    /// CR 701.37a: "When ~ becomes monstrous" — canonical Oracle phrasing.
+    /// Kalemne's Captain: "When ~ becomes monstrous, exile all artifacts and
+    /// enchantments." Parser must emit TriggerMode::BecomeMonstrous with
+    /// valid_card set to the subject (the permanent that becomes monstrous).
+    #[test]
+    fn trigger_becomes_monstrous_exile_artifacts() {
+        let def = parse_trigger_line(
+            "When ~ becomes monstrous, exile all artifacts and enchantments.",
+            "Kalemne's Captain",
+        );
+        assert_eq!(def.mode, TriggerMode::BecomeMonstrous);
+        assert!(
+            def.valid_card.is_some(),
+            "expected valid_card to be set for becomes-monstrous trigger, got None"
+        );
+    }
+
+    /// CR 701.37a: Regression guard — "becomes monstrous" with a counter-pump
+    /// effect body (Polukranos, World Eater pattern). Parser must emit
+    /// TriggerMode::BecomeMonstrous regardless of the execute body shape.
+    #[test]
+    fn trigger_becomes_monstrous_deals_damage() {
+        let def = parse_trigger_line(
+            "When ~ becomes monstrous, ~ deals damage equal to its power to target creature.",
+            "Polukranos, World Eater",
+        );
+        assert_eq!(def.mode, TriggerMode::BecomeMonstrous);
+        assert!(
+            def.valid_card.is_some(),
+            "expected valid_card to be set for becomes-monstrous trigger"
+        );
+    }
+
+    /// CR 701.37a: Regression guard — "becomes monstrous" with a tap-all
+    /// effect body (Hythonia the Cruel pattern). Confirms the parser arm
+    /// fires for any execute body, not just exile effects.
+    #[test]
+    fn trigger_becomes_monstrous_destroys_creatures() {
+        let def = parse_trigger_line(
+            "When ~ becomes monstrous, destroy all non-Gorgon creatures.",
+            "Hythonia the Cruel",
+        );
+        assert_eq!(def.mode, TriggerMode::BecomeMonstrous);
+        assert!(
+            def.valid_card.is_some(),
+            "expected valid_card to be set for becomes-monstrous trigger"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // CR ???: "When ~ specializes" — Specializes trigger parser
+    // -----------------------------------------------------------------------
+    /// CR ???: "When ~ specializes" — canonical Oracle phrasing for the
+    /// Commander Legends: Battle for Baldur's Gate Specialize mechanic.
+    /// Wyll of the Blade Pact: "When ~ specializes, you may sacrifice another
+    /// creature or an artifact. If you do, untap ~. After this main phase,
+    /// there is an additional combat phase followed by an additional main phase."
+    /// Parser must emit TriggerMode::Specializes with valid_card set to subject.
+    #[test]
+    fn trigger_specializes_wyll() {
+        let def = parse_trigger_line(
+            "When ~ specializes, you may sacrifice another creature or an artifact.",
+            "Wyll of the Blade Pact",
+        );
+        assert_eq!(def.mode, TriggerMode::Specializes);
+        assert!(
+            def.valid_card.is_some(),
+            "expected valid_card to be set for specializes trigger, got None"
+        );
+    }
+
+    /// CR ???: Regression guard — "When ~ specializes" with a seek effect body
+    /// (Klement, Knowledge Acolyte pattern). Parser must emit
+    /// TriggerMode::Specializes regardless of the execute body shape.
+    #[test]
+    fn trigger_specializes_seek_cards() {
+        let def = parse_trigger_line(
+            "When ~ specializes, seek three nonland permanent cards.",
+            "Klement, Knowledge Acolyte",
+        );
+        assert_eq!(def.mode, TriggerMode::Specializes);
+        assert!(
+            def.valid_card.is_some(),
+            "expected valid_card to be set for specializes trigger"
+        );
+    }
+
+    /// CR ???: Regression guard — "When ~ specializes" with a life-gain effect
+    /// body (Jaheira, Merciful Harper pattern). Confirms the parser arm fires
+    /// for any execute body, not just seek effects.
+    #[test]
+    fn trigger_specializes_gain_life() {
+        let def = parse_trigger_line(
+            "When ~ specializes, you gain 3 life.",
+            "Jaheira, Merciful Harper",
+        );
+        assert_eq!(def.mode, TriggerMode::Specializes);
+        assert!(
+            def.valid_card.is_some(),
+            "expected valid_card to be set for specializes trigger"
+        );
     }
 }
