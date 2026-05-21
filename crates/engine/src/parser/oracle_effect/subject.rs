@@ -498,8 +498,10 @@ fn try_parse_can_block_additional(
     }
     let subject = text[..pos].trim();
     let application = parse_subject_application(subject, ctx)?;
-    let duration = if lower.contains("this turn") || lower.contains("this combat") {
+    let duration = if lower.contains("this turn") {
         Some(Duration::UntilEndOfTurn)
+    } else if lower.contains("this combat") {
+        Some(Duration::UntilEndOfCombat)
     } else {
         None
     };
