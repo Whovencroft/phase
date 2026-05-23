@@ -553,6 +553,46 @@ pub(crate) fn handle_discard_for_cost(
 }
 
 /// CR 118.3 + CR 601.2b: Complete sacrifice-as-cost after player selection.
+pub(crate) fn handle_activation_cost_one_of_choice(
+    state: &mut GameState,
+    player: PlayerId,
+    mut pending: PendingCast,
+    costs: &[AbilityCost],
+    index: usize,
+    events: &mut Vec<GameEvent>,
+) -> Result<WaitingFor, EngineError> {
+    if index >= costs.len() {
+        return Err(EngineError::InvalidAction(format!(
+            "Invalid OneOf cost branch index: {}",
+            index
+        )));
+    }
+
+    let chosen_cost = &costs[index];
+    if !chosen_cost.is_payable(state, player, pending.object_id) {
+        return Err(EngineError::ActionNotAllowed(
+            "Chosen cost branch is not payable".to_string(),
+        ));
+    }
+
+    // Replace the OneOf cost with the chosen branch in the pending cast
+    if let Some(AbilityCost::Composite {
+        costs: ref mut composite_costs,
+    }) = pending.activation_cost
+    {
+        for cost in composite_costs.iter_mut() {
+            if matches!(cost, AbilityCost::OneOf { .. }) {
+                *cost = chosen_cost.clone();
+                break;
+            }
+        }
+    } else if matches!(pending.activation_cost, Some(AbilityCost::OneOf { .. })) {
+        pending.activation_cost = Some(chosen_cost.clone());
+    }
+
+    finish_pending_cost_or_cast(state, player, pending, events)
+}
+
 pub(crate) fn handle_sacrifice_for_cost(
     state: &mut GameState,
     player: PlayerId,
