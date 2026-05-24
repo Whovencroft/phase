@@ -8719,6 +8719,10 @@ pub enum AbilityCondition {
     /// Queen on_decline), wrap with `AbilityCondition::Not`.
     /// `filter` MUST have its `ControllerRef::You` pre-bound by the parser.
     ControllerControlsMatching { filter: TargetFilter },
+    /// CR 601.2 + CR 608.2c: "if you controlled a [filter] as you cast this spell" —
+    /// gates on a casting-time snapshot in `SpellContext`, not the resolution-time
+    /// battlefield. The parser pre-binds `ControllerRef::You` and battlefield scope.
+    ControllerControlledMatchingAsCast { filter: TargetFilter },
     /// CR 608.2c: "If it's your turn" — gates sub_ability on whether the active player
     /// is the ability's controller. For "if it's not your turn", wrap with
     /// `AbilityCondition::Not`.
@@ -8919,6 +8923,12 @@ pub struct SpellContext {
     /// conditions such as "if you cast this spell during your main phase".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cast_phase: Option<Phase>,
+    /// CR 601.2 + CR 608.2c: Presence filters the controller matched as the
+    /// spell was cast. Used by effects that say "if you controlled a [filter]
+    /// as you cast this spell"; the resolver checks this snapshot instead of
+    /// the resolution-time battlefield.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controller_controlled_as_cast: Vec<TargetFilter>,
 }
 
 impl SpellContext {
@@ -9564,6 +9574,10 @@ pub struct TriggerDefinition {
     /// CR 603.2c: "One or more" triggers fire once per batch of simultaneous events.
     #[serde(default)]
     pub batched: bool,
+    /// CR 706.2: Optional sides filter for die-roll triggers such as
+    /// "Whenever you roll a d20". `None` accepts any die.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub die_sides: Option<u8>,
     /// CR 700.14: Expend threshold — fires when cumulative mana spent on spells crosses N.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expend_threshold: Option<u32>,
@@ -9573,6 +9587,14 @@ pub struct TriggerDefinition {
     /// Typed player actions for PlayerPerformedAction trigger mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_actions: Option<Vec<PlayerActionKind>>,
+    /// CR 603.2 + CR 120.1: Per-event damage-amount threshold for damage triggers
+    /// ("…deals 5 or more damage to a player"). When `Some((cmp, n))`, the
+    /// matcher requires the `DamageDealt` event's `amount` to satisfy
+    /// `amount cmp n`. `None` means no amount restriction. Applies to all
+    /// damage-event trigger modes (`DamageDone`, `DamageDoneOnce`, `DamageAll`,
+    /// `DamageDealtOnce`); ignored by other modes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub damage_amount: Option<(Comparator, u32)>,
 }
 
 impl TriggerDefinition {
@@ -9599,9 +9621,11 @@ impl TriggerDefinition {
             counter_filter: None,
             unless_pay: None,
             batched: false,
+            die_sides: None,
             expend_threshold: None,
             attack_target_filter: None,
             player_actions: None,
+            damage_amount: None,
         }
     }
 
@@ -11564,9 +11588,11 @@ mod tests {
             counter_filter: None,
             unless_pay: None,
             batched: false,
+            die_sides: None,
             expend_threshold: None,
             attack_target_filter: None,
             player_actions: None,
+            damage_amount: None,
         };
         let json = serde_json::to_string(&trigger).unwrap();
         let deserialized: TriggerDefinition = serde_json::from_str(&json).unwrap();
