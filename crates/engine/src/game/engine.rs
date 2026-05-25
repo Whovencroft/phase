@@ -4027,10 +4027,19 @@ pub(super) fn begin_pending_trigger_target_selection(
                 modal,
                 &crate::types::ability::SpellContext::default(),
             );
-            let unavailable_modes = compute_unavailable_modes(state, trigger.source_id, &modal);
+            let mut unavailable_modes = compute_unavailable_modes(state, trigger.source_id, &modal);
+            super::ability_utils::filter_modes_by_target_legality(
+                state,
+                trigger.source_id,
+                trigger.controller,
+                &trigger.mode_abilities,
+                &modal,
+                &mut unavailable_modes,
+            );
 
-            // CR 700.2: All modes already chosen — ability cannot be put on the stack
-            // without a mode selection. Clear pending trigger and skip.
+            // CR 700.2d: All modes unavailable (previously chosen OR no legal
+            // targets) — ability cannot be put on the stack. Clear pending
+            // trigger and skip.
             if unavailable_modes.len() >= modal.mode_count {
                 state.pending_trigger = None;
                 return Ok(None);

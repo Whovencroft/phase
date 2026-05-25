@@ -7158,7 +7158,15 @@ pub fn handle_activate_ability(
                 ));
             }
         }
-        let unavailable_modes = compute_unavailable_modes(state, source_id, &modal);
+        let mut unavailable_modes = compute_unavailable_modes(state, source_id, &modal);
+        super::ability_utils::filter_modes_by_target_legality(
+            state,
+            source_id,
+            player,
+            &ability_def.mode_abilities,
+            &modal,
+            &mut unavailable_modes,
+        );
         // CR 700.2a / CR 700.2e: `AbilityModeChoice.player` is threaded
         // downstream as the activated ability's controller (cost payment,
         // stack `controller`, target selection — see `engine_modes.rs`), so
