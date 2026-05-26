@@ -10369,9 +10369,10 @@ mod tests {
         {
             let obj = state.objects.get_mut(&source).unwrap();
             obj.card_types.core_types.push(CoreType::Artifact);
-            // CR 602.2b: Composite cost with Tap + X mana, targeting "any target"
-            // (DealDamage with TargetFilter::Any) — multiple legal targets force
-            // interactive selection, exercising the deferred-target path.
+            // CR 602.2b: The remainder of the process for activating an ability
+            // is identical to the process for casting a spell listed in rules
+            // 601.2b–i. Here, a composite cost with Tap + X mana and interactive
+            // target selection exercises the deferred-target path.
             Arc::make_mut(&mut obj.abilities).push(
                 AbilityDefinition::new(
                     AbilityKind::Activated,
@@ -10418,6 +10419,9 @@ mod tests {
         // Commit X = 2. After mana payment + Tap, the ability needs interactive
         // target selection (multiple legal targets: both players).
         apply_as_current(&mut state, GameAction::ChooseX { value: 2 }).unwrap();
+        // Note: In strict CR 601.2, target selection (601.2c) occurs before cost
+        // payment (601.2h). The engine shortcuts this by paying non-mana costs
+        // first, so the source is already tapped before target selection begins.
         assert!(
             state.objects[&source].tapped,
             "source must be tapped after cost payment"
