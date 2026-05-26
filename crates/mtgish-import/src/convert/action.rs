@@ -585,112 +585,48 @@ fn rewrite_bound_x_in_effect(effect: &mut Effect, binding: &QuantityExpr) -> usi
 fn rewrite_any_target_filter_in_effect(effect: &mut Effect, typed: &TargetFilter) {
     match effect {
         // GenericEffect carries an Option<TargetFilter>; rewrite if it's Any.
-        Effect::GenericEffect {
-            ref mut target, ..
-        } => {
+        Effect::GenericEffect { ref mut target, .. } => {
             if target.as_ref() == Some(&TargetFilter::Any) {
                 *target = Some(typed.clone());
             }
         }
         // LoseLife also carries Option<TargetFilter>.
-        Effect::LoseLife {
-            ref mut target, ..
-        } => {
+        Effect::LoseLife { ref mut target, .. } => {
             if target.as_ref() == Some(&TargetFilter::Any) {
                 *target = Some(typed.clone());
             }
         }
         // Effects with a direct `target: TargetFilter` field.
-        Effect::DealDamage {
-            ref mut target, ..
-        }
-        | Effect::Draw {
-            ref mut target, ..
-        }
-        | Effect::Pump {
-            ref mut target, ..
-        }
-        | Effect::Destroy {
-            ref mut target, ..
-        }
-        | Effect::Tap {
-            ref mut target, ..
-        }
-        | Effect::Untap {
-            ref mut target, ..
-        }
-        | Effect::AddCounter {
-            ref mut target, ..
-        }
-        | Effect::RemoveCounter {
-            ref mut target, ..
-        }
-        | Effect::Bounce {
-            ref mut target, ..
-        }
-        | Effect::GainControl {
-            ref mut target, ..
-        }
-        | Effect::Sacrifice {
-            ref mut target, ..
-        }
-        | Effect::DiscardCard {
-            ref mut target, ..
-        }
-        | Effect::ChangeZone {
-            ref mut target, ..
-        }
-        | Effect::PutCounter {
-            ref mut target, ..
-        }
-        | Effect::Fight {
-            ref mut target, ..
-        }
-        | Effect::Regenerate {
-            ref mut target, ..
-        }
-        | Effect::Counter {
-            ref mut target, ..
-        }
-        | Effect::Animate {
-            ref mut target, ..
-        }
-        | Effect::Attach {
-            ref mut target, ..
-        }
-        | Effect::BecomeCopy {
-            ref mut target, ..
-        }
-        | Effect::SwitchPT {
-            ref mut target, ..
-        }
-        | Effect::DoublePT {
-            ref mut target, ..
-        }
-        | Effect::Transform {
-            ref mut target, ..
-        }
-        | Effect::PhaseOut {
-            ref mut target, ..
-        }
-        | Effect::Goad {
-            ref mut target, ..
-        }
-        | Effect::Detain {
-            ref mut target, ..
-        }
-        | Effect::ExtraTurn {
-            ref mut target, ..
-        }
-        | Effect::Connive {
-            ref mut target, ..
-        }
-        | Effect::Suspect {
-            ref mut target, ..
-        }
-        | Effect::Exploit {
-            ref mut target, ..
-        } => {
+        Effect::DealDamage { ref mut target, .. }
+        | Effect::Draw { ref mut target, .. }
+        | Effect::Pump { ref mut target, .. }
+        | Effect::Destroy { ref mut target, .. }
+        | Effect::Tap { ref mut target, .. }
+        | Effect::Untap { ref mut target, .. }
+        | Effect::AddCounter { ref mut target, .. }
+        | Effect::RemoveCounter { ref mut target, .. }
+        | Effect::Bounce { ref mut target, .. }
+        | Effect::GainControl { ref mut target, .. }
+        | Effect::Sacrifice { ref mut target, .. }
+        | Effect::DiscardCard { ref mut target, .. }
+        | Effect::ChangeZone { ref mut target, .. }
+        | Effect::PutCounter { ref mut target, .. }
+        | Effect::Fight { ref mut target, .. }
+        | Effect::Regenerate { ref mut target, .. }
+        | Effect::Counter { ref mut target, .. }
+        | Effect::Animate { ref mut target, .. }
+        | Effect::Attach { ref mut target, .. }
+        | Effect::BecomeCopy { ref mut target, .. }
+        | Effect::SwitchPT { ref mut target, .. }
+        | Effect::DoublePT { ref mut target, .. }
+        | Effect::Transform { ref mut target, .. }
+        | Effect::PhaseOut { ref mut target, .. }
+        | Effect::Goad { ref mut target, .. }
+        | Effect::Detain { ref mut target, .. }
+        | Effect::ExtraTurn { ref mut target, .. }
+        | Effect::Connive { ref mut target, .. }
+        | Effect::Suspect { ref mut target, .. }
+        | Effect::Exploit { ref mut target, .. } => {
             if *target == TargetFilter::Any {
                 *target = typed.clone();
             }
@@ -713,9 +649,7 @@ fn target_descriptor_to_filter(targets: &[Target]) -> Option<TargetFilter> {
         | Target::OneOrMoreTargetPermanents(permanents)
         | Target::OneOrTwoTargetPermanents(permanents) => filter_mod::convert(permanents).ok(),
         Target::NumberTargetPermanents(_, permanents)
-        | Target::UptoNumberTargetPermanents(_, permanents) => {
-            filter_mod::convert(permanents).ok()
-        }
+        | Target::UptoNumberTargetPermanents(_, permanents) => filter_mod::convert(permanents).ok(),
         Target::TargetPlayer(_) | Target::UptoOneTargetPlayer(_) => Some(TargetFilter::Player),
         // AnyTarget and other shapes stay as-is — no typed constraint to thread.
         _ => None,
