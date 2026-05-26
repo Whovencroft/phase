@@ -590,41 +590,88 @@ fn rewrite_any_target_filter_in_effect(effect: &mut Effect, typed: &TargetFilter
         {
             *target = Some(typed.clone());
         }
-        // LoseLife also carries Option<TargetFilter>.
-        Effect::LoseLife { ref mut target, .. } if target.as_ref() == Some(&TargetFilter::Any) => {
+        // LoseLife and Mana also carry Option<TargetFilter>.
+        Effect::LoseLife { ref mut target, .. } | Effect::Mana { ref mut target, .. }
+            if target.as_ref() == Some(&TargetFilter::Any) =>
+        {
             *target = Some(typed.clone());
         }
         // Effects with a direct `target: TargetFilter` field.
-        Effect::DealDamage { ref mut target, .. }
-        | Effect::Draw { ref mut target, .. }
-        | Effect::Pump { ref mut target, .. }
-        | Effect::Destroy { ref mut target, .. }
-        | Effect::Tap { ref mut target, .. }
-        | Effect::Untap { ref mut target, .. }
-        | Effect::AddCounter { ref mut target, .. }
-        | Effect::RemoveCounter { ref mut target, .. }
-        | Effect::Bounce { ref mut target, .. }
-        | Effect::GainControl { ref mut target, .. }
-        | Effect::Sacrifice { ref mut target, .. }
-        | Effect::DiscardCard { ref mut target, .. }
-        | Effect::ChangeZone { ref mut target, .. }
-        | Effect::PutCounter { ref mut target, .. }
-        | Effect::Fight { ref mut target, .. }
-        | Effect::Regenerate { ref mut target, .. }
-        | Effect::Counter { ref mut target, .. }
+        Effect::AddCounter { ref mut target, .. }
+        | Effect::AddTargetReplacement { ref mut target, .. }
+        | Effect::AdditionalPhase { ref mut target, .. }
         | Effect::Animate { ref mut target, .. }
         | Effect::Attach { ref mut target, .. }
         | Effect::BecomeCopy { ref mut target, .. }
-        | Effect::SwitchPT { ref mut target, .. }
-        | Effect::DoublePT { ref mut target, .. }
-        | Effect::Transform { ref mut target, .. }
-        | Effect::PhaseOut { ref mut target, .. }
-        | Effect::Goad { ref mut target, .. }
-        | Effect::Detain { ref mut target, .. }
-        | Effect::ExtraTurn { ref mut target, .. }
+        | Effect::BecomePrepared { ref mut target, .. }
+        | Effect::BecomeUnprepared { ref mut target, .. }
+        | Effect::Bounce { ref mut target, .. }
+        | Effect::BounceAll { ref mut target, .. }
+        | Effect::CastFromZone { ref mut target, .. }
+        | Effect::ChangeZone { ref mut target, .. }
+        | Effect::ChangeZoneAll { ref mut target, .. }
+        | Effect::ChooseCard { ref mut target, .. }
         | Effect::Connive { ref mut target, .. }
-        | Effect::Suspect { ref mut target, .. }
+        | Effect::ControlNextTurn { ref mut target, .. }
+        | Effect::CopySpell { ref mut target, .. }
+        | Effect::Counter { ref mut target, .. }
+        | Effect::CounterAll { ref mut target, .. }
+        | Effect::DamageAll { ref mut target, .. }
+        | Effect::DealDamage { ref mut target, .. }
+        | Effect::Destroy { ref mut target, .. }
+        | Effect::DestroyAll { ref mut target, .. }
+        | Effect::Detain { ref mut target, .. }
+        | Effect::DiscardCard { ref mut target, .. }
+        | Effect::Double { ref mut target, .. }
+        | Effect::DoublePT { ref mut target, .. }
+        | Effect::DoublePTAll { ref mut target, .. }
+        | Effect::Draw { ref mut target, .. }
         | Effect::Exploit { ref mut target, .. }
+        | Effect::ExtraTurn { ref mut target, .. }
+        | Effect::Fight { ref mut target, .. }
+        | Effect::ForceBlock { ref mut target, .. }
+        | Effect::GainControl { ref mut target, .. }
+        | Effect::GiveControl { ref mut target, .. }
+        | Effect::GivePlayerCounter { ref mut target, .. }
+        | Effect::Goad { ref mut target, .. }
+        | Effect::GoadAll { ref mut target, .. }
+        | Effect::GrantCastingPermission { ref mut target, .. }
+        | Effect::GrantExtraLoyaltyActivations { ref mut target, .. }
+        | Effect::LoseAllPlayerCounters { ref mut target, .. }
+        | Effect::Manifest { ref mut target, .. }
+        | Effect::Mill { ref mut target, .. }
+        | Effect::MoveCounters { ref mut target, .. }
+        | Effect::MultiplyCounter { ref mut target, .. }
+        | Effect::PairWith { ref mut target, .. }
+        | Effect::PhaseIn { ref mut target, .. }
+        | Effect::PhaseOut { ref mut target, .. }
+        | Effect::Pump { ref mut target, .. }
+        | Effect::PumpAll { ref mut target, .. }
+        | Effect::PutAtLibraryPosition { ref mut target, .. }
+        | Effect::PutCounter { ref mut target, .. }
+        | Effect::PutCounterAll { ref mut target, .. }
+        | Effect::PutOnTopOrBottom { ref mut target, .. }
+        | Effect::Regenerate { ref mut target, .. }
+        | Effect::RemoveCounter { ref mut target, .. }
+        | Effect::RemoveFromCombat { ref mut target, .. }
+        | Effect::Reveal { ref mut target, .. }
+        | Effect::RevealHand { ref mut target, .. }
+        | Effect::Sacrifice { ref mut target, .. }
+        | Effect::Scry { ref mut target, .. }
+        | Effect::SetLifeTotal { ref mut target, .. }
+        | Effect::Shuffle { ref mut target, .. }
+        | Effect::SkipNextStep { ref mut target, .. }
+        | Effect::SkipNextTurn { ref mut target, .. }
+        | Effect::Surveil { ref mut target, .. }
+        | Effect::Suspect { ref mut target, .. }
+        | Effect::SwitchPT { ref mut target, .. }
+        | Effect::Tap { ref mut target, .. }
+        | Effect::TapAll { ref mut target, .. }
+        | Effect::TargetOnly { ref mut target, .. }
+        | Effect::Transform { ref mut target, .. }
+        | Effect::UnattachAll { ref mut target, .. }
+        | Effect::Untap { ref mut target, .. }
+        | Effect::UntapAll { ref mut target, .. }
             if *target == TargetFilter::Any =>
         {
             *target = typed.clone();
