@@ -35,9 +35,9 @@ use crate::convert::trigger as trigger_mod;
 use crate::schema::types::{
     Action, Actions, CardInExile, CardInGraveyard, CardType, CardsInHand, CounterType,
     CreatureType, DamageRecipient, DamageToRecipients, DistributedTarget, Distribution,
-    FutureTrigger, GameNumber, GroupFilter, ManaUseModifier, Permanent, Player, Players,
-    ReplacementActionWouldEnter, RevealTheTopNumberCardsOfLibraryAction, Rule, SearchLibraryAction,
-    Spell, Spells, TokenFlag,
+    FutureTrigger, GameNumber, GroupFilter, ManaUseModifier, Permanent, Permanents, Player,
+    Players, ReplacementActionWouldEnter, RevealTheTopNumberCardsOfLibraryAction, Rule,
+    SearchLibraryAction, Spell, Spells, Target, TokenFlag,
 };
 
 /// Modal-choice arity for `ActionsConversion::Modal`. Mirrors the engine's
@@ -211,6 +211,11 @@ pub enum ActionsConversion {
 #[derive(Debug, Clone, Default)]
 struct VariableBindings {
     x: Option<QuantityExpr>,
+    /// CR 115.1 / CR 608.2b: Typed target constraint inherited from an outer
+    /// `Actions::Targeted` wrapper. When set, inner `Ref_TargetPermanent`
+    /// references that collapsed to `TargetFilter::Any` are rewritten to this
+    /// typed filter so the engine can surface a proper target slot at cast time.
+    target_filter: Option<TargetFilter>,
 }
 
 impl VariableBindings {
@@ -231,6 +236,19 @@ impl VariableBindings {
             .iter_mut()
             .map(|effect| rewrite_bound_x_in_effect(effect, binding))
             .sum()
+    }
+
+    /// CR 115.1: Rewrite `TargetFilter::Any` in effect target fields with the
+    /// typed constraint from the outer `Actions::Targeted` wrapper. This
+    /// preserves the typed target slot so the engine can prompt for targets
+    /// at cast/activation time (CR 601.2c).
+    fn rewrite_target_filters(&self, effects: &mut [Effect]) {
+        let Some(typed) = &self.target_filter else {
+            return;
+        };
+        for effect in effects.iter_mut() {
+            rewrite_any_target_filter_in_effect(effect, typed);
+        }
     }
 }
 
@@ -557,6 +575,150 @@ fn rewrite_bound_x_in_effect(effect: &mut Effect, binding: &QuantityExpr) -> usi
             .map(|branch| rewrite_bound_x_in_ability_definition(branch, binding))
             .sum(),
         _ => 0,
+    }
+}
+
+/// CR 115.1 + CR 601.2c: Replace `TargetFilter::Any` in an effect's target
+/// field with a typed constraint inherited from an outer `Actions::Targeted`
+/// wrapper. Only rewrites the top-level target axis — sub-abilities and
+/// delayed triggers keep their own target semantics.
+fn rewrite_any_target_filter_in_effect(effect: &mut Effect, typed: &TargetFilter) {
+    match effect {
+        // GenericEffect carries an Option<TargetFilter>; rewrite if it's Any.
+        Effect::GenericEffect {
+            ref mut target, ..
+        } => {
+            if target.as_ref() == Some(&TargetFilter::Any) {
+                *target = Some(typed.clone());
+            }
+        }
+        // LoseLife also carries Option<TargetFilter>.
+        Effect::LoseLife {
+            ref mut target, ..
+        } => {
+            if target.as_ref() == Some(&TargetFilter::Any) {
+                *target = Some(typed.clone());
+            }
+        }
+        // Effects with a direct `target: TargetFilter` field.
+        Effect::DealDamage {
+            ref mut target, ..
+        }
+        | Effect::Draw {
+            ref mut target, ..
+        }
+        | Effect::Pump {
+            ref mut target, ..
+        }
+        | Effect::Destroy {
+            ref mut target, ..
+        }
+        | Effect::Tap {
+            ref mut target, ..
+        }
+        | Effect::Untap {
+            ref mut target, ..
+        }
+        | Effect::AddCounter {
+            ref mut target, ..
+        }
+        | Effect::RemoveCounter {
+            ref mut target, ..
+        }
+        | Effect::Bounce {
+            ref mut target, ..
+        }
+        | Effect::GainControl {
+            ref mut target, ..
+        }
+        | Effect::Sacrifice {
+            ref mut target, ..
+        }
+        | Effect::DiscardCard {
+            ref mut target, ..
+        }
+        | Effect::ChangeZone {
+            ref mut target, ..
+        }
+        | Effect::PutCounter {
+            ref mut target, ..
+        }
+        | Effect::Fight {
+            ref mut target, ..
+        }
+        | Effect::Regenerate {
+            ref mut target, ..
+        }
+        | Effect::Counter {
+            ref mut target, ..
+        }
+        | Effect::Animate {
+            ref mut target, ..
+        }
+        | Effect::Attach {
+            ref mut target, ..
+        }
+        | Effect::BecomeCopy {
+            ref mut target, ..
+        }
+        | Effect::SwitchPT {
+            ref mut target, ..
+        }
+        | Effect::DoublePT {
+            ref mut target, ..
+        }
+        | Effect::Transform {
+            ref mut target, ..
+        }
+        | Effect::PhaseOut {
+            ref mut target, ..
+        }
+        | Effect::Goad {
+            ref mut target, ..
+        }
+        | Effect::Detain {
+            ref mut target, ..
+        }
+        | Effect::ExtraTurn {
+            ref mut target, ..
+        }
+        | Effect::Connive {
+            ref mut target, ..
+        }
+        | Effect::Suspect {
+            ref mut target, ..
+        }
+        | Effect::Exploit {
+            ref mut target, ..
+        } => {
+            if *target == TargetFilter::Any {
+                *target = typed.clone();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Convert the first `Target` descriptor from an `Actions::Targeted` wrapper
+/// into a `TargetFilter`. Returns `None` when the descriptor doesn't carry a
+/// typed permanent constraint (e.g., `AnyTarget` stays as `TargetFilter::Any`
+/// and is not useful for rewriting).
+fn target_descriptor_to_filter(targets: &[Target]) -> Option<TargetFilter> {
+    let first = targets.first()?;
+    match first {
+        Target::TargetPermanent(permanents)
+        | Target::UptoOneTargetPermanent(permanents)
+        | Target::UptoOneTargetPermanent_Optional(permanents)
+        | Target::AnyNumberOfTargetPermanents(permanents)
+        | Target::OneOrMoreTargetPermanents(permanents)
+        | Target::OneOrTwoTargetPermanents(permanents) => filter_mod::convert(permanents).ok(),
+        Target::NumberTargetPermanents(_, permanents)
+        | Target::UptoNumberTargetPermanents(_, permanents) => {
+            filter_mod::convert(permanents).ok()
+        }
+        Target::TargetPlayer(_) | Target::UptoOneTargetPlayer(_) => Some(TargetFilter::Player),
+        // AnyTarget and other shapes stay as-is — no typed constraint to thread.
+        _ => None,
     }
 }
 
@@ -4491,10 +4653,19 @@ fn convert_list_with_bindings(
         //
         // CR 608.2b notes that target choice is made at cast/activation time;
         // the typed constraint described by the outer Target descriptor is
-        // surfaced when the engine prompts for targets. Today the inner
-        // refs collapse to `TargetFilter::Any`, which loses the typed
-        // constraint but preserves resolution semantics.
-        Actions::Targeted(_targets, inner) => convert_list_with_bindings(inner, bindings),
+        // surfaced when the engine prompts for targets. The inner refs
+        // collapse to `TargetFilter::Any` during conversion; we rewrite them
+        // here with the typed constraint so the engine can surface a proper
+        // target slot at cast time (CR 601.2c).
+        Actions::Targeted(targets, inner) => {
+            let mut inner_bindings = bindings.clone();
+            if let Some(typed) = target_descriptor_to_filter(targets) {
+                inner_bindings.target_filter = Some(typed);
+            }
+            let mut effects = convert_list_with_bindings(inner, &inner_bindings)?;
+            inner_bindings.rewrite_target_filters(&mut effects);
+            Ok(effects)
+        }
 
         // CR 601.2c + CR 115.1: Distributed-damage / distributed-counters
         // wrapper (e.g. "Distribute three +1/+1 counters among any number
