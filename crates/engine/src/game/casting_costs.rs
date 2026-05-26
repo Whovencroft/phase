@@ -1143,7 +1143,12 @@ pub(super) fn push_activated_ability_to_stack(
             resolved,
             crate::types::mana::ManaCost::NoCost,
         );
-        pending_act.activation_cost = remaining_cost.cloned();
+        // CR 602.2b: The remaining non-mana cost (Tap, Sacrifice, etc.) was
+        // already paid at the `pay_ability_cost` call above (line 1102). Do NOT
+        // store it here — the resumed target-selection path in
+        // `casting_targets.rs` would attempt to pay it a second time, causing a
+        // softlock when the permanent is already tapped (issue #897 class).
+        pending_act.activation_cost = None;
         pending_act.activation_ability_index = Some(ability_index);
         return Ok(WaitingFor::TargetSelection {
             player,

@@ -10347,6 +10347,100 @@ mod tests {
         );
     }
 
+    /// Regression test for issue #897: X-cost activated ability with Composite
+    /// {Tap, Mana{X}} cost must NOT attempt to pay the Tap sub-cost a second
+    /// time when interactive target selection is required. Before the fix,
+    /// `push_activated_ability_to_stack` paid the Tap cost and then stored it
+    /// in `pending_act.activation_cost`; the resumed target-selection path in
+    /// `casting_targets.rs` would try to pay it again, causing a softlock.
+    #[test]
+    fn x_cost_activated_composite_tap_no_double_payment_on_interactive_targets() {
+        use super::super::engine::apply_as_current;
+        use crate::types::ability::{AbilityCost, QuantityRef};
+
+        let mut state = setup_game_at_main_phase();
+        let source = create_object(
+            &mut state,
+            CardId(952),
+            PlayerId(0),
+            "X Damage Relic".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let obj = state.objects.get_mut(&source).unwrap();
+            obj.card_types.core_types.push(CoreType::Artifact);
+            // CR 602.2b: Composite cost with Tap + X mana, targeting "any target"
+            // (DealDamage with TargetFilter::Any) — multiple legal targets force
+            // interactive selection, exercising the deferred-target path.
+            Arc::make_mut(&mut obj.abilities).push(
+                AbilityDefinition::new(
+                    AbilityKind::Activated,
+                    Effect::DealDamage {
+                        amount: QuantityExpr::Ref {
+                            qty: QuantityRef::Variable {
+                                name: "X".to_string(),
+                            },
+                        },
+                        target: TargetFilter::Any,
+                        damage_source: None,
+                    },
+                )
+                .cost(AbilityCost::Composite {
+                    costs: vec![
+                        AbilityCost::Tap,
+                        AbilityCost::Mana {
+                            cost: ManaCost::Cost {
+                                shards: vec![ManaCostShard::X],
+                                generic: 0,
+                            },
+                        },
+                    ],
+                }),
+            );
+        }
+        add_mana(&mut state, PlayerId(0), ManaType::Colorless, 3);
+
+        // Activate — expect ChooseXValue.
+        apply_as_current(
+            &mut state,
+            GameAction::ActivateAbility {
+                source_id: source,
+                ability_index: 0,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(state.waiting_for, WaitingFor::ChooseXValue { .. }),
+            "expected ChooseXValue, got {:?}",
+            state.waiting_for
+        );
+
+        // Commit X = 2. After mana payment + Tap, the ability needs interactive
+        // target selection (multiple legal targets: both players).
+        apply_as_current(&mut state, GameAction::ChooseX { value: 2 }).unwrap();
+        assert!(
+            state.objects[&source].tapped,
+            "source must be tapped after cost payment"
+        );
+        // The waiting_for should be TargetSelection, NOT a softlock/error.
+        assert!(
+            matches!(state.waiting_for, WaitingFor::TargetSelection { .. }),
+            "expected TargetSelection for interactive target choice, got {:?}",
+            state.waiting_for
+        );
+
+        // Verify the pending_cast does NOT carry activation_cost (no double-pay).
+        if let WaitingFor::TargetSelection {
+            ref pending_cast, ..
+        } = state.waiting_for
+        {
+            assert!(
+                pending_cast.activation_cost.is_none(),
+                "activation_cost must be None after cost was already paid (issue #897)"
+            );
+        }
+    }
+
     #[test]
     fn x_cost_activated_minimum_rejects_zero_and_accepts_one() {
         use super::super::engine::apply_as_current;
