@@ -35,9 +35,9 @@ use crate::convert::trigger as trigger_mod;
 use crate::schema::types::{
     Action, Actions, CardInExile, CardInGraveyard, CardType, CardsInHand, CounterType,
     CreatureType, DamageRecipient, DamageToRecipients, DistributedTarget, Distribution,
-    FutureTrigger, GameNumber, GroupFilter, ManaUseModifier, Permanent, Permanents, Player,
-    Players, ReplacementActionWouldEnter, RevealTheTopNumberCardsOfLibraryAction, Rule,
-    SearchLibraryAction, Spell, Spells, Target, TokenFlag,
+    FutureTrigger, GameNumber, GroupFilter, ManaUseModifier, Permanent, Player, Players,
+    ReplacementActionWouldEnter, RevealTheTopNumberCardsOfLibraryAction, Rule, SearchLibraryAction,
+    Spell, Spells, Target, TokenFlag,
 };
 
 /// Modal-choice arity for `ActionsConversion::Modal`. Mirrors the engine's
@@ -585,16 +585,14 @@ fn rewrite_bound_x_in_effect(effect: &mut Effect, binding: &QuantityExpr) -> usi
 fn rewrite_any_target_filter_in_effect(effect: &mut Effect, typed: &TargetFilter) {
     match effect {
         // GenericEffect carries an Option<TargetFilter>; rewrite if it's Any.
-        Effect::GenericEffect { ref mut target, .. } => {
-            if target.as_ref() == Some(&TargetFilter::Any) {
-                *target = Some(typed.clone());
-            }
+        Effect::GenericEffect { ref mut target, .. }
+            if target.as_ref() == Some(&TargetFilter::Any) =>
+        {
+            *target = Some(typed.clone());
         }
         // LoseLife also carries Option<TargetFilter>.
-        Effect::LoseLife { ref mut target, .. } => {
-            if target.as_ref() == Some(&TargetFilter::Any) {
-                *target = Some(typed.clone());
-            }
+        Effect::LoseLife { ref mut target, .. } if target.as_ref() == Some(&TargetFilter::Any) => {
+            *target = Some(typed.clone());
         }
         // Effects with a direct `target: TargetFilter` field.
         Effect::DealDamage { ref mut target, .. }
@@ -626,10 +624,10 @@ fn rewrite_any_target_filter_in_effect(effect: &mut Effect, typed: &TargetFilter
         | Effect::ExtraTurn { ref mut target, .. }
         | Effect::Connive { ref mut target, .. }
         | Effect::Suspect { ref mut target, .. }
-        | Effect::Exploit { ref mut target, .. } => {
-            if *target == TargetFilter::Any {
-                *target = typed.clone();
-            }
+        | Effect::Exploit { ref mut target, .. }
+            if *target == TargetFilter::Any =>
+        {
+            *target = typed.clone();
         }
         _ => {}
     }
