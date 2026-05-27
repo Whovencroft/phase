@@ -8086,18 +8086,19 @@ fn is_blocked_by_per_turn_cast_limit(
 
 #[cfg(test)]
 mod tests {
+    use super::super::engine::apply_as_current;
     use super::*;
     use crate::game::zones;
     use crate::game::zones::create_object;
     use crate::parser::oracle_effect::parse_effect_chain;
     use crate::parser::oracle_static::parse_static_line;
     use crate::types::ability::{
-        AbilityTag, ActivationRestriction, BasicLandType, CastPermissionConstraint,
+        AbilityCost, AbilityTag, ActivationRestriction, BasicLandType, CastPermissionConstraint,
         CastVariantPaid, CastingPermission, ChosenAttribute, ChosenSubtypeKind, Comparator,
         ContinuousModification, ControllerRef, CostCategory, FilterProp, GainLifePlayer,
         GameRestriction, KickerVariant, ManaContribution, ManaProduction, ManaSpendPermission,
         ManaSpendRestriction, ModalSelectionCondition, ModalSelectionConstraint,
-        ProhibitedActivity, QuantityExpr, RestrictionExpiry, RestrictionPlayerScope,
+        ProhibitedActivity, QuantityExpr, QuantityRef, RestrictionExpiry, RestrictionPlayerScope,
         SearchSelectionConstraint, StaticCondition, StaticDefinition, TargetFilter, TypeFilter,
         TypedFilter,
     };
@@ -10371,9 +10372,6 @@ mod tests {
     /// `casting_targets.rs` would try to pay it again, causing a softlock.
     #[test]
     fn x_cost_activated_composite_tap_no_double_payment_on_interactive_targets() {
-        use super::super::engine::apply_as_current;
-        use crate::types::ability::{AbilityCost, QuantityRef};
-
         let mut state = setup_game_at_main_phase();
         let source = create_object(
             &mut state,
