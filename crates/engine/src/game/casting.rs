@@ -7158,7 +7158,23 @@ pub fn handle_activate_ability(
                 ));
             }
         }
-        let unavailable_modes = compute_unavailable_modes(state, source_id, &modal);
+        let mut unavailable_modes = compute_unavailable_modes(state, source_id, &modal);
+        super::ability_utils::filter_modes_by_target_legality(
+            state,
+            source_id,
+            player,
+            &ability_def.mode_abilities,
+            &modal,
+            &mut unavailable_modes,
+        );
+        // CR 700.2a: The controller chooses modes while activating a modal
+        // ability. If every mode is illegal due to unavailable selections or
+        // unsatisfied targeting requirements, the ability cannot be activated.
+        if unavailable_modes.len() >= modal.mode_count {
+            return Err(EngineError::ActionNotAllowed(
+                "No legal modes available for activated ability".to_string(),
+            ));
+        }
         // CR 700.2a / CR 700.2e: `AbilityModeChoice.player` is threaded
         // downstream as the activated ability's controller (cost payment,
         // stack `controller`, target selection — see `engine_modes.rs`), so
@@ -8070,18 +8086,19 @@ fn is_blocked_by_per_turn_cast_limit(
 
 #[cfg(test)]
 mod tests {
+    use super::super::engine::apply_as_current;
     use super::*;
     use crate::game::zones;
     use crate::game::zones::create_object;
     use crate::parser::oracle_effect::parse_effect_chain;
     use crate::parser::oracle_static::parse_static_line;
     use crate::types::ability::{
-        AbilityTag, ActivationRestriction, BasicLandType, CastPermissionConstraint,
+        AbilityCost, AbilityTag, ActivationRestriction, BasicLandType, CastPermissionConstraint,
         CastVariantPaid, CastingPermission, ChosenAttribute, ChosenSubtypeKind, Comparator,
         ContinuousModification, ControllerRef, CostCategory, FilterProp, GainLifePlayer,
         GameRestriction, KickerVariant, ManaContribution, ManaProduction, ManaSpendPermission,
         ManaSpendRestriction, ModalSelectionCondition, ModalSelectionConstraint,
-        ProhibitedActivity, QuantityExpr, RestrictionExpiry, RestrictionPlayerScope,
+        ProhibitedActivity, QuantityExpr, QuantityRef, RestrictionExpiry, RestrictionPlayerScope,
         SearchSelectionConstraint, StaticCondition, StaticDefinition, TargetFilter, TypeFilter,
         TypedFilter,
     };
@@ -10345,6 +10362,101 @@ mod tests {
             1,
             "activated ability on stack after auto-pay"
         );
+    }
+
+    /// Regression test for issue #897: X-cost activated ability with Composite
+    /// {Tap, Mana{X}} cost must NOT attempt to pay the Tap sub-cost a second
+    /// time when interactive target selection is required. Before the fix,
+    /// `push_activated_ability_to_stack` paid the Tap cost and then stored it
+    /// in `pending_act.activation_cost`; the resumed target-selection path in
+    /// `casting_targets.rs` would try to pay it again, causing a softlock.
+    #[test]
+    fn x_cost_activated_composite_tap_no_double_payment_on_interactive_targets() {
+        let mut state = setup_game_at_main_phase();
+        let source = create_object(
+            &mut state,
+            CardId(952),
+            PlayerId(0),
+            "X Damage Relic".to_string(),
+            Zone::Battlefield,
+        );
+        {
+            let obj = state.objects.get_mut(&source).unwrap();
+            obj.card_types.core_types.push(CoreType::Artifact);
+            // CR 602.2b: The remainder of the process for activating an ability
+            // is identical to the process for casting a spell listed in rules
+            // 601.2b–i. Here, a composite cost with Tap + X mana and interactive
+            // target selection exercises the deferred-target path.
+            Arc::make_mut(&mut obj.abilities).push(
+                AbilityDefinition::new(
+                    AbilityKind::Activated,
+                    Effect::DealDamage {
+                        amount: QuantityExpr::Ref {
+                            qty: QuantityRef::Variable {
+                                name: "X".to_string(),
+                            },
+                        },
+                        target: TargetFilter::Any,
+                        damage_source: None,
+                    },
+                )
+                .cost(AbilityCost::Composite {
+                    costs: vec![
+                        AbilityCost::Tap,
+                        AbilityCost::Mana {
+                            cost: ManaCost::Cost {
+                                shards: vec![ManaCostShard::X],
+                                generic: 0,
+                            },
+                        },
+                    ],
+                }),
+            );
+        }
+        add_mana(&mut state, PlayerId(0), ManaType::Colorless, 3);
+
+        // Activate — expect ChooseXValue.
+        apply_as_current(
+            &mut state,
+            GameAction::ActivateAbility {
+                source_id: source,
+                ability_index: 0,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(state.waiting_for, WaitingFor::ChooseXValue { .. }),
+            "expected ChooseXValue, got {:?}",
+            state.waiting_for
+        );
+
+        // Commit X = 2. After mana payment + Tap, the ability needs interactive
+        // target selection (multiple legal targets: both players).
+        apply_as_current(&mut state, GameAction::ChooseX { value: 2 }).unwrap();
+        // Note: In strict CR 601.2, target selection (601.2c) occurs before cost
+        // payment (601.2h). The engine shortcuts this by paying non-mana costs
+        // first, so the source is already tapped before target selection begins.
+        assert!(
+            state.objects[&source].tapped,
+            "source must be tapped after cost payment"
+        );
+        // The waiting_for should be TargetSelection, NOT a softlock/error.
+        assert!(
+            matches!(state.waiting_for, WaitingFor::TargetSelection { .. }),
+            "expected TargetSelection for interactive target choice, got {:?}",
+            state.waiting_for
+        );
+
+        // Verify the pending_cast does NOT carry activation_cost (no double-pay).
+        if let WaitingFor::TargetSelection {
+            ref pending_cast, ..
+        } = state.waiting_for
+        {
+            assert!(
+                pending_cast.activation_cost.is_none(),
+                "activation_cost must be None after cost was already paid (issue #897)"
+            );
+        }
     }
 
     #[test]
@@ -13555,6 +13667,61 @@ mod tests {
             event,
             GameEvent::AbilityActivated { source_id, .. } if *source_id == source
         )));
+    }
+
+    #[test]
+    fn activated_modal_with_no_legal_target_modes_rejects_activation() {
+        let mut state = setup_game_at_main_phase();
+        let source = create_object(
+            &mut state,
+            CardId(62),
+            PlayerId(0),
+            "Modal Pinger".to_string(),
+            Zone::Battlefield,
+        );
+        let obj = state.objects.get_mut(&source).unwrap();
+        obj.card_types.core_types.push(CoreType::Artifact);
+        Arc::make_mut(&mut obj.abilities).push(
+            AbilityDefinition::new(
+                AbilityKind::Activated,
+                Effect::Unimplemented {
+                    name: "modal placeholder".to_string(),
+                    description: None,
+                },
+            )
+            .with_modal(
+                crate::types::ability::ModalChoice {
+                    min_choices: 1,
+                    max_choices: 1,
+                    mode_count: 1,
+                    mode_descriptions: vec!["Deal 1 damage to target creature.".to_string()],
+                    ..Default::default()
+                },
+                vec![AbilityDefinition::new(
+                    AbilityKind::Activated,
+                    Effect::DealDamage {
+                        amount: QuantityExpr::Fixed { value: 1 },
+                        target: TargetFilter::Typed(TypedFilter {
+                            type_filters: vec![TypeFilter::Creature],
+                            controller: Some(ControllerRef::Opponent),
+                            properties: vec![],
+                        }),
+                        damage_source: None,
+                    },
+                )],
+            ),
+        );
+
+        let mut events = Vec::new();
+        let result = handle_activate_ability(&mut state, PlayerId(0), source, 0, &mut events);
+
+        assert!(matches!(
+            result,
+            Err(EngineError::ActionNotAllowed(message))
+                if message == "No legal modes available for activated ability"
+        ));
+        assert!(events.is_empty());
+        assert!(state.stack.is_empty());
     }
 
     #[test]

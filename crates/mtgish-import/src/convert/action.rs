@@ -1543,7 +1543,7 @@ pub fn convert_chain_segments(list: &Actions) -> ConvResult<Vec<ChainSegment>> {
                         segments.push(ChainSegment {
                             condition: Some(engine::types::ability::AbilityCondition::Not {
                                 condition: Box::new(
-                                    engine::types::ability::AbilityCondition::IfYouDo,
+                                    engine::types::ability::AbilityCondition::effect_performed(),
                                 ),
                             }),
                             effects: body_effects,
@@ -1645,7 +1645,7 @@ pub fn convert_chain_segments(list: &Actions) -> ConvResult<Vec<ChainSegment>> {
                         segments.push(ChainSegment {
                             condition: Some(engine::types::ability::AbilityCondition::Not {
                                 condition: Box::new(
-                                    engine::types::ability::AbilityCondition::IfYouDo,
+                                    engine::types::ability::AbilityCondition::effect_performed(),
                                 ),
                             }),
                             effects: body_effects,
@@ -2089,7 +2089,7 @@ pub fn convert_chain_segments(list: &Actions) -> ConvResult<Vec<ChainSegment>> {
                 match (win_is_noop, lose_is_noop) {
                     (true, true) => {}
                     (false, true) => segments.push(ChainSegment {
-                        condition: Some(AbilityCondition::IfYouDo),
+                        condition: Some(AbilityCondition::effect_performed()),
                         effects: convert_action_vec_with_bindings(win_body, &bindings)?,
                         else_effects: None,
                         optional: SegmentOptional::Mandatory,
@@ -2097,7 +2097,7 @@ pub fn convert_chain_segments(list: &Actions) -> ConvResult<Vec<ChainSegment>> {
                     }),
                     (true, false) => segments.push(ChainSegment {
                         condition: Some(AbilityCondition::Not {
-                            condition: Box::new(AbilityCondition::IfYouDo),
+                            condition: Box::new(AbilityCondition::effect_performed()),
                         }),
                         effects: convert_action_vec_with_bindings(lose_body, &bindings)?,
                         else_effects: None,
@@ -2105,7 +2105,7 @@ pub fn convert_chain_segments(list: &Actions) -> ConvResult<Vec<ChainSegment>> {
                         player_scope: None,
                     }),
                     (false, false) => segments.push(ChainSegment {
-                        condition: Some(AbilityCondition::IfYouDo),
+                        condition: Some(AbilityCondition::effect_performed()),
                         effects: convert_action_vec_with_bindings(win_body, &bindings)?,
                         else_effects: Some(convert_action_vec_with_bindings(lose_body, &bindings)?),
                         optional: SegmentOptional::Mandatory,
@@ -6614,7 +6614,7 @@ mod tests {
         let sub = ability.sub_ability.as_ref().expect("expected paid body");
         assert_eq!(
             sub.condition,
-            Some(engine::types::ability::AbilityCondition::IfYouDo)
+            Some(engine::types::ability::AbilityCondition::effect_performed())
         );
         assert!(matches!(sub.effect.as_ref(), Effect::Draw { .. }));
     }

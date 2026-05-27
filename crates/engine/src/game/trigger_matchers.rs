@@ -5,7 +5,7 @@ use crate::types::ability::{
     TargetFilter, TargetRef, TriggerDefinition, TypedFilter,
 };
 use crate::types::events::{GameEvent, PlayerActionKind};
-use crate::types::game_state::{GameState, StackEntryKind};
+use crate::types::game_state::GameState;
 use crate::types::identifiers::ObjectId;
 use crate::types::player::PlayerId;
 use crate::types::triggers::TriggerMode;
@@ -123,6 +123,8 @@ pub fn trigger_matcher(mode: TriggerMode) -> Option<TriggerMatcher> {
         TriggerMode::Waterbend => match_waterbend,
         TriggerMode::ElementalBend => match_elemental_bend,
         TriggerMode::BecomesPlotted => match_becomes_plotted,
+        // CR 104.3a: "Whenever a player loses the game" — dedicated matcher.
+        TriggerMode::LosesGame => match_loses_game,
         TriggerMode::DamagePreventedOnce
         | TriggerMode::AbilityCast
         | TriggerMode::AbilityResolves
@@ -136,7 +138,6 @@ pub fn trigger_matcher(mode: TriggerMode) -> Option<TriggerMatcher> {
         | TriggerMode::PhaseOut
         | TriggerMode::PhaseOutAll
         | TriggerMode::NewGame
-        | TriggerMode::LosesGame
         | TriggerMode::Championed
         | TriggerMode::Exerted
         | TriggerMode::Enlisted
@@ -329,6 +330,9 @@ pub fn build_trigger_registry() -> HashMap<TriggerMode, TriggerMatcher> {
     // CR 725: Initiative triggers
     r.insert(TriggerMode::TakesInitiative, match_takes_initiative);
 
+    // CR 104.3a: "Whenever a player loses the game" — player-loss trigger.
+    r.insert(TriggerMode::LosesGame, match_loses_game);
+
     // CR 702.110a: Exploit trigger matcher
     r.insert(TriggerMode::Exploited, match_exploited);
 
@@ -360,7 +364,7 @@ pub fn build_trigger_registry() -> HashMap<TriggerMode, TriggerMatcher> {
         TriggerMode::PhaseOutAll,
         TriggerMode::NewGame,
         // TriggerMode::TakesInitiative — moved to real matcher above
-        TriggerMode::LosesGame,
+        // TriggerMode::LosesGame — moved to real matcher above
         TriggerMode::Championed,
         TriggerMode::Exerted,
         // TriggerMode::Crewed — moved to real matcher below
@@ -590,6 +594,156 @@ pub(super) fn target_filter_matches_object(
             &super::filter::FilterContext::from_source(state, source_id),
         ),
     }
+}
+
+/// CR 603.2c: Count subjects matching `valid_card` in the events that fired a
+/// batched trigger. Building block for "Whenever one or more <FILTER>
+/// <verb>, do <X> that many <thing>" patterns (The Ur-Dragon's attack-and-draw
+/// trigger, etc.).
+///
+/// Returns `None` when the count is undefined — `valid_card` is absent or is
+/// `SelfRef` (the trigger source is its own subject and the "that many" math
+/// degenerates to 1). Callers fall back to the existing
+/// `EventContextAmount` cascade in `quantity.rs`.
+pub(crate) fn count_trigger_subjects_in_batch(
+    state: &GameState,
+    valid_card: Option<&TargetFilter>,
+    source_id: ObjectId,
+    events: &[GameEvent],
+) -> Option<u32> {
+    let filter = match valid_card {
+        Some(f) if !matches!(f, TargetFilter::SelfRef) => f,
+        _ => return None,
+    };
+    let count = events.iter().fold(0u32, |acc, event| {
+        acc.saturating_add(count_matching_trigger_event_subjects(
+            state, source_id, filter, event,
+        ))
+    });
+    Some(count)
+}
+
+/// CR 603.2c: Count object subjects carried by a single `GameEvent` for
+/// trigger filter matching. Grows by event family as new "one or more
+/// <FILTER> <verb>" patterns land. Variants without an object subject count 0.
+fn count_matching_trigger_event_subjects(
+    state: &GameState,
+    source_id: ObjectId,
+    filter: &TargetFilter,
+    event: &GameEvent,
+) -> u32 {
+    let matches = |id| target_filter_matches_object(state, id, filter, source_id);
+    let count_slice =
+        |ids: &[ObjectId]| usize_to_u32_saturating(ids.iter().filter(|id| matches(**id)).count());
+    let count_one = |id| u32::from(matches(id));
+    match event {
+        GameEvent::AttackersDeclared { attacker_ids, .. } => count_slice(attacker_ids),
+        GameEvent::ZoneChanged { object_id, .. }
+        | GameEvent::Discarded { object_id, .. }
+        | GameEvent::SpellCast { object_id, .. }
+        | GameEvent::TokenCreated { object_id, .. }
+        | GameEvent::CreatureDestroyed { object_id }
+        | GameEvent::Evolved { object_id }
+        | GameEvent::PermanentSacrificed { object_id, .. }
+        | GameEvent::PermanentTapped { object_id, .. }
+        | GameEvent::PermanentUntapped { object_id } => count_one(*object_id),
+        // CR 120.3: Damage dealt to an object yields the damaged object as
+        // subject. Damage dealt to a player has no object subject.
+        GameEvent::DamageDealt { target, .. } => match target {
+            TargetRef::Object(id) => count_one(*id),
+            TargetRef::Player(_) => 0,
+        },
+        GameEvent::GameStarted
+        | GameEvent::TurnStarted { .. }
+        | GameEvent::PhaseChanged { .. }
+        | GameEvent::PriorityPassed { .. }
+        | GameEvent::SpellCopied { .. }
+        | GameEvent::XValueChosen { .. }
+        | GameEvent::AbilityActivated { .. }
+        | GameEvent::LifeChanged { .. }
+        | GameEvent::ManaAdded { .. }
+        | GameEvent::TappedForMana { .. }
+        | GameEvent::ManaPoolEmptied { .. }
+        | GameEvent::ManaRecolored { .. }
+        | GameEvent::PlayerLost { .. }
+        | GameEvent::MulliganStarted
+        | GameEvent::CardsDrawn { .. }
+        | GameEvent::CardDrawn { .. }
+        | GameEvent::PermanentPhasedOut { .. }
+        | GameEvent::PermanentPhasedIn { .. }
+        | GameEvent::PlayerPhasedOut { .. }
+        | GameEvent::PlayerPhasedIn { .. }
+        | GameEvent::LandPlayed { .. }
+        | GameEvent::StackPushed { .. }
+        | GameEvent::StackResolved { .. }
+        | GameEvent::DamageCleared { .. }
+        | GameEvent::GameOver { .. }
+        | GameEvent::DamagePrevented { .. }
+        | GameEvent::SpellCountered { .. }
+        | GameEvent::CounterAdded { .. }
+        | GameEvent::CounterRemoved { .. }
+        | GameEvent::ObjectConjured { .. }
+        | GameEvent::EffectResolved { .. }
+        | GameEvent::Unattached { .. }
+        | GameEvent::BlockersDeclared { .. }
+        | GameEvent::CombatTaxPaid { .. }
+        | GameEvent::CombatTaxDeclined { .. }
+        | GameEvent::BecomesTarget { .. }
+        | GameEvent::VehicleCrewed { .. }
+        | GameEvent::Stationed { .. }
+        | GameEvent::Saddled { .. }
+        | GameEvent::ReplacementApplied { .. }
+        | GameEvent::Transformed { .. }
+        | GameEvent::DayNightChanged { .. }
+        | GameEvent::TurnedFaceUp { .. }
+        | GameEvent::CardsRevealed { .. }
+        | GameEvent::CombatDamageDealtToPlayer { .. }
+        | GameEvent::PlayerEliminated { .. }
+        | GameEvent::CrimeCommitted { .. }
+        | GameEvent::Cycled { .. }
+        | GameEvent::PlayerPerformedAction { .. }
+        | GameEvent::Regenerated { .. }
+        | GameEvent::CreatureSuspected { .. }
+        | GameEvent::BecamePrepared { .. }
+        | GameEvent::BecameUnprepared { .. }
+        | GameEvent::CaseSolved { .. }
+        | GameEvent::ClassLevelGained { .. }
+        | GameEvent::MonarchChanged { .. }
+        | GameEvent::CityBlessingGained { .. }
+        | GameEvent::DieRolled { .. }
+        | GameEvent::CoinFlipped { .. }
+        | GameEvent::RingTemptsYou { .. }
+        | GameEvent::RoomEntered { .. }
+        | GameEvent::RoomDoorUnlocked { .. }
+        | GameEvent::BecomesPlotted { .. }
+        | GameEvent::DungeonCompleted { .. }
+        | GameEvent::InitiativeTaken { .. }
+        | GameEvent::Firebend { .. }
+        | GameEvent::Airbend { .. }
+        | GameEvent::Earthbend { .. }
+        | GameEvent::Waterbend { .. }
+        | GameEvent::CompanionRevealed { .. }
+        | GameEvent::CompanionMovedToHand { .. }
+        | GameEvent::NinjutsuActivated { .. }
+        | GameEvent::KeywordAbilityActivated { .. }
+        | GameEvent::CreatureExploited { .. }
+        | GameEvent::EnergyChanged { .. }
+        | GameEvent::SpeedChanged { .. }
+        | GameEvent::PlayerCounterChanged { .. }
+        | GameEvent::ManaExpended { .. }
+        | GameEvent::Clash { .. }
+        | GameEvent::VoteCast { .. }
+        | GameEvent::VoteResolved { .. }
+        | GameEvent::PowerToughnessChanged { .. }
+        | GameEvent::CascadeMissed { .. }
+        | GameEvent::DebugActionUsed { .. }
+        | GameEvent::DebugPermissionGranted { .. }
+        | GameEvent::DebugPermissionRevoked { .. } => 0,
+    }
+}
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 // ---------------------------------------------------------------------------
@@ -1493,13 +1647,28 @@ pub(super) fn match_becomes_target(
         return false;
     };
 
-    // CR 115.1a: Check source filter — "of a spell" restricts to StackEntryKind::Spell
-    if let Some(TargetFilter::StackSpell) = &trigger.valid_source {
-        let is_spell = state
+    // CR 115.1a + CR 115.1b: Trigger text like "of a spell" and "of an Aura spell"
+    // constrains the targeting source to matching stack spell characteristics.
+    if let Some(source_filter) = &trigger.valid_source {
+        let Some(targeting_entry) = state
             .stack
             .iter()
-            .any(|e| e.id == *targeting_spell_id && matches!(e.kind, StackEntryKind::Spell { .. }));
-        if !is_spell {
+            .find(|entry| entry.id == *targeting_spell_id)
+        else {
+            return false;
+        };
+        let trigger_controller = state
+            .objects
+            .get(&source_id)
+            .map(|obj| obj.controller)
+            .unwrap_or(state.active_player);
+        if !super::targeting::stack_entry_matches_filter(
+            state,
+            targeting_entry,
+            source_filter,
+            trigger_controller,
+            source_id,
+        ) {
             return false;
         }
     }
@@ -1686,7 +1855,8 @@ pub(super) fn match_exiled(
     }
 }
 
-/// Attached: fires when source becomes attached to a permanent.
+/// CR 701.3a: Attached triggers compare the object that became attached
+/// (`valid_card`) with the host it is attached to (`valid_target`).
 pub(super) fn match_attached(
     event: &GameEvent,
     trigger: &TriggerDefinition,
@@ -1698,20 +1868,26 @@ pub(super) fn match_attached(
             kind: EffectKind::Attach | EffectKind::AttachAll | EffectKind::Equip,
             source_id: event_source_id,
         } => {
-            if !matches!(
+            let attachment_id = if matches!(
                 event,
                 GameEvent::EffectResolved {
                     kind: EffectKind::AttachAll,
                     ..
                 }
-            ) && *event_source_id != source_id
+            ) {
+                source_id
+            } else {
+                *event_source_id
+            };
+
+            if attachment_id != source_id
+                && !matches!(trigger.valid_target, Some(TargetFilter::SelfRef))
             {
                 return false;
             }
-            if !valid_card_matches(trigger, state, source_id, source_id) {
-                return false;
-            }
-            attached_host_matches(trigger, state, source_id)
+
+            valid_card_matches(trigger, state, attachment_id, source_id)
+                && attached_host_matches(trigger, state, attachment_id, source_id)
         }
         _ => false,
     }
@@ -1720,11 +1896,12 @@ pub(super) fn match_attached(
 fn attached_host_matches(
     trigger: &TriggerDefinition,
     state: &GameState,
-    source_id: ObjectId,
+    attachment_id: ObjectId,
+    trigger_source_id: ObjectId,
 ) -> bool {
     let Some(host) = state
         .objects
-        .get(&source_id)
+        .get(&attachment_id)
         .and_then(|obj| obj.attached_to)
     else {
         return false;
@@ -1734,10 +1911,10 @@ fn attached_host_matches(
     };
     match host {
         crate::game::game_object::AttachTarget::Object(object_id) => {
-            target_filter_matches_object(state, object_id, filter, source_id)
+            target_filter_matches_object(state, object_id, filter, trigger_source_id)
         }
         crate::game::game_object::AttachTarget::Player(player_id) => {
-            player_matches_filter(filter, state, player_id, source_id)
+            player_matches_filter(filter, state, player_id, trigger_source_id)
         }
     }
 }
@@ -2157,18 +2334,25 @@ pub(super) fn match_becomes_blocked(
     }
 }
 
-/// DamageReceived: fires when the source creature is dealt damage.
-/// Uses DamageDealt event but checks the *target* (not source) against the trigger source.
+/// DamageReceived: fires when the trigger source or a filtered player is dealt damage.
+/// Uses DamageDealt event but checks the *target* (not the damage source) against the trigger.
+///
+/// Two target patterns are supported:
+/// - Object target: "Whenever ~ is dealt damage" — `target == source_id`.
+/// - Player target: "Whenever you're dealt damage" — `valid_target` scopes the player.
+///
+/// `valid_source` optionally scopes the damage source for either target shape.
 pub(super) fn match_damage_received(
     event: &GameEvent,
     trigger: &TriggerDefinition,
     source_id: ObjectId,
-    _state: &GameState,
+    state: &GameState,
 ) -> bool {
     if let GameEvent::DamageDealt {
         target,
         is_combat,
         amount,
+        source_id: damage_source_id,
         ..
     } = event
     {
@@ -2186,15 +2370,19 @@ pub(super) fn match_damage_received(
         }
         match target {
             TargetRef::Object(target_id) => {
-                if trigger.valid_card.is_some() {
-                    // Would need valid_card_matches on the target — for now,
-                    // self-reference is the dominant pattern ("Whenever ~ is dealt damage")
-                    *target_id == source_id
-                } else {
-                    *target_id == source_id
-                }
+                // Object target: trigger source is the damaged permanent.
+                *target_id == source_id
+                    && valid_source_matches(trigger, state, *damage_source_id, source_id)
             }
-            TargetRef::Player(_) => false,
+            TargetRef::Player(pid) => {
+                // Player target: check the damaged player matches valid_target
+                // (e.g., "you" → Controller) and optionally that the damage
+                // source matches valid_source. CR 120.1 + CR 120.3.
+                if !valid_player_matches(trigger, state, *pid, source_id) {
+                    return false;
+                }
+                valid_source_matches(trigger, state, *damage_source_id, source_id)
+            }
         }
     } else {
         false
@@ -2440,6 +2628,23 @@ pub(super) fn match_dungeon_completed(
     state: &GameState,
 ) -> bool {
     if let GameEvent::DungeonCompleted { player_id, .. } = event {
+        valid_player_matches(trigger, state, *player_id, source_id)
+    } else {
+        false
+    }
+}
+
+/// CR 104.3a: "Whenever a player loses the game" — fires when any player's
+/// loss event is recorded. The `valid_target` filter (if set) restricts
+/// which player's loss triggers the ability. Cards: Withengar Unbound,
+/// Ramses Assassin Lord, Blood Tyrant.
+pub(super) fn match_loses_game(
+    event: &GameEvent,
+    trigger: &TriggerDefinition,
+    source_id: ObjectId,
+    state: &GameState,
+) -> bool {
+    if let GameEvent::PlayerLost { player_id } = event {
         valid_player_matches(trigger, state, *player_id, source_id)
     } else {
         false
@@ -3170,6 +3375,75 @@ mod tests {
         };
 
         assert!(!match_attached(&event, &trigger, equipment, &state));
+    }
+
+    /// CR 701.3a Pattern 2: "Whenever an Aura becomes attached to ~" fires when
+    /// an Aura (event_source_id) attaches to the trigger source (source_id).
+    /// Cards: Bramble Elemental, Brood Keeper.
+    #[test]
+    fn attached_pattern2_fires_when_aura_attaches_to_host() {
+        let mut state = setup();
+        // host = Bramble Elemental (trigger source)
+        let host = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Bramble Elemental".to_string(),
+            Zone::Battlefield,
+        );
+        // aura = some Aura card
+        let aura = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Rancor".to_string(),
+            Zone::Battlefield,
+        );
+        // Mark the aura as an Enchantment with Aura subtype
+        {
+            let obj = state.objects.get_mut(&aura).unwrap();
+            obj.card_types.core_types.push(CoreType::Enchantment);
+            obj.card_types.subtypes.push("Aura".to_string());
+            obj.attached_to = Some(host.into());
+        }
+
+        // Trigger: valid_card = Aura attachment, valid_target = trigger source host.
+        let mut trigger = make_trigger(TriggerMode::Attached);
+        trigger.valid_card = Some(TargetFilter::Typed(
+            TypedFilter::default().subtype("Aura".to_string()),
+        ));
+        trigger.valid_target = Some(TargetFilter::SelfRef);
+
+        // Event: Attach resolved with the Aura as source
+        let event = GameEvent::EffectResolved {
+            kind: EffectKind::Attach,
+            source_id: aura,
+        };
+        assert!(
+            match_attached(&event, &trigger, host, &state),
+            "Pattern 2 must fire when an Aura attaches to the trigger source"
+        );
+
+        // Should NOT fire if the aura attaches to a different host
+        let other_host = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(1),
+            "Bear".to_string(),
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(&aura).unwrap().attached_to = Some(other_host.into());
+        assert!(
+            !match_attached(&event, &trigger, host, &state),
+            "Pattern 2 must not fire when the Aura attaches to a different host"
+        );
+
+        trigger.valid_target = None;
+        state.objects.get_mut(&aura).unwrap().attached_to = Some(host.into());
+        assert!(
+            !match_attached(&event, &trigger, host, &state),
+            "external attachment events must declare the trigger source host"
+        );
     }
 
     #[test]
@@ -6062,9 +6336,25 @@ mod tests {
     // BecomesTarget + valid_source (spell-only filtering)
     // -----------------------------------------------------------------------
 
-    fn setup_with_spell_on_stack() -> (GameState, ObjectId) {
+    fn setup_with_spell_on_stack(is_aura_spell: bool) -> (GameState, ObjectId) {
         let mut state = setup();
-        let spell_id = ObjectId(50);
+        let spell_id = create_object(
+            &mut state,
+            CardId(100),
+            PlayerId(0),
+            if is_aura_spell {
+                "Pacifism".to_string()
+            } else {
+                "Lightning Bolt".to_string()
+            },
+            Zone::Stack,
+        );
+        if is_aura_spell {
+            if let Some(spell_obj) = state.objects.get_mut(&spell_id) {
+                spell_obj.card_types.core_types.push(CoreType::Enchantment);
+                spell_obj.card_types.subtypes.push("Aura".to_string());
+            }
+        }
         state.stack.push_back(StackEntry {
             id: spell_id,
             source_id: spell_id,
@@ -6085,6 +6375,15 @@ mod tests {
             },
         });
         (state, spell_id)
+    }
+
+    fn aura_stack_spell_filter() -> TargetFilter {
+        TargetFilter::And {
+            filters: vec![
+                TargetFilter::StackSpell,
+                TargetFilter::Typed(TypedFilter::default().subtype("Aura".to_string())),
+            ],
+        }
     }
 
     fn setup_with_ability_on_stack() -> (GameState, ObjectId) {
@@ -6112,7 +6411,7 @@ mod tests {
 
     #[test]
     fn becomes_target_spell_only_matches_spell() {
-        let (state, spell_id) = setup_with_spell_on_stack();
+        let (state, spell_id) = setup_with_spell_on_stack(false);
         // trigger_owner is the permanent with the trigger (e.g. Bonecrusher Giant)
         let trigger_owner = ObjectId(5);
         let mut trigger = make_trigger(TriggerMode::BecomesTarget);
@@ -6165,6 +6464,63 @@ mod tests {
             source_id: ability_id,
         };
         assert!(match_becomes_target(
+            &event,
+            &trigger,
+            trigger_owner,
+            &state
+        ));
+    }
+
+    #[test]
+    fn becomes_target_aura_spell_filter_matches_aura_spell() {
+        let (state, spell_id) = setup_with_spell_on_stack(true);
+        let trigger_owner = ObjectId(5);
+        let mut trigger = make_trigger(TriggerMode::BecomesTarget);
+        trigger.valid_source = Some(aura_stack_spell_filter());
+
+        let event = GameEvent::BecomesTarget {
+            object_id: trigger_owner,
+            source_id: spell_id,
+        };
+        assert!(match_becomes_target(
+            &event,
+            &trigger,
+            trigger_owner,
+            &state
+        ));
+    }
+
+    #[test]
+    fn becomes_target_aura_spell_filter_rejects_non_aura_spell() {
+        let (state, spell_id) = setup_with_spell_on_stack(false);
+        let trigger_owner = ObjectId(5);
+        let mut trigger = make_trigger(TriggerMode::BecomesTarget);
+        trigger.valid_source = Some(aura_stack_spell_filter());
+
+        let event = GameEvent::BecomesTarget {
+            object_id: trigger_owner,
+            source_id: spell_id,
+        };
+        assert!(!match_becomes_target(
+            &event,
+            &trigger,
+            trigger_owner,
+            &state
+        ));
+    }
+
+    #[test]
+    fn becomes_target_aura_spell_filter_rejects_ability_source() {
+        let (state, ability_id) = setup_with_ability_on_stack();
+        let trigger_owner = ObjectId(5);
+        let mut trigger = make_trigger(TriggerMode::BecomesTarget);
+        trigger.valid_source = Some(aura_stack_spell_filter());
+
+        let event = GameEvent::BecomesTarget {
+            object_id: trigger_owner,
+            source_id: ability_id,
+        };
+        assert!(!match_becomes_target(
             &event,
             &trigger,
             trigger_owner,
@@ -6373,6 +6729,132 @@ mod tests {
                 "amount={amount} GE 3"
             );
         }
+    }
+
+    /// CR 120.1: match_damage_received fires for player targets when valid_target=Controller
+    /// and the opponent's source matches valid_source.
+    #[test]
+    fn damage_received_player_target_with_opponent_source_filter() {
+        let mut state = setup();
+        // Trigger source = Farsight Mask (controller = P0)
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Farsight Mask".to_string(),
+            Zone::Battlefield,
+        );
+        // Opponent's source (P1 controls this creature)
+        let opp_source = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(1),
+            "Goblin".to_string(),
+            Zone::Battlefield,
+        );
+
+        let mut trigger = make_trigger(TriggerMode::DamageReceived);
+        trigger.valid_target = Some(TargetFilter::Controller); // "deals damage to you"
+        trigger.valid_source = Some(TargetFilter::Typed(
+            TypedFilter::default().controller(ControllerRef::Opponent),
+        )); // "a source an opponent controls"
+
+        // Opponent's source (P1) deals damage to you (P0) — fires.
+        let event = GameEvent::DamageDealt {
+            source_id: opp_source,
+            target: TargetRef::Player(PlayerId(0)),
+            amount: 3,
+            is_combat: true,
+            excess: 0,
+        };
+        assert!(
+            match_damage_received(&event, &trigger, source, &state),
+            "must fire when opponent source deals damage to controller"
+        );
+
+        // Your own source (P0) deals damage to you (P0) — must NOT fire (source is not opponent).
+        let own_source = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(0),
+            "OwnCreature".to_string(),
+            Zone::Battlefield,
+        );
+        let event2 = GameEvent::DamageDealt {
+            source_id: own_source,
+            target: TargetRef::Player(PlayerId(0)),
+            amount: 3,
+            is_combat: true,
+            excess: 0,
+        };
+        assert!(
+            !match_damage_received(&event2, &trigger, source, &state),
+            "must not fire when own source deals damage"
+        );
+
+        // Opponent source deals damage to opponent (P1) — must NOT fire (wrong player).
+        let event3 = GameEvent::DamageDealt {
+            source_id: opp_source,
+            target: TargetRef::Player(PlayerId(1)),
+            amount: 3,
+            is_combat: true,
+            excess: 0,
+        };
+        assert!(
+            !match_damage_received(&event3, &trigger, source, &state),
+            "must not fire when opponent is damaged, not controller"
+        );
+    }
+
+    /// CR 120.1: source filters also apply when the damaged target is the
+    /// trigger source object, matching the player-target branch.
+    #[test]
+    fn damage_received_object_target_respects_source_filter() {
+        let mut state = setup();
+        let target = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Phyrexian Obliterator".to_string(),
+            Zone::Battlefield,
+        );
+        let opp_source = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(1),
+            "Goblin".to_string(),
+            Zone::Battlefield,
+        );
+        let own_source = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(0),
+            "Own Creature".to_string(),
+            Zone::Battlefield,
+        );
+
+        let mut trigger = make_trigger(TriggerMode::DamageReceived);
+        trigger.valid_source = Some(TargetFilter::Typed(
+            TypedFilter::default().controller(ControllerRef::Opponent),
+        ));
+
+        let event = GameEvent::DamageDealt {
+            source_id: opp_source,
+            target: TargetRef::Object(target),
+            amount: 3,
+            is_combat: false,
+            excess: 0,
+        };
+        assert!(match_damage_received(&event, &trigger, target, &state));
+
+        let own_event = GameEvent::DamageDealt {
+            source_id: own_source,
+            target: TargetRef::Object(target),
+            amount: 3,
+            is_combat: false,
+            excess: 0,
+        };
+        assert!(!match_damage_received(&own_event, &trigger, target, &state));
     }
 
     #[test]
@@ -7793,5 +8275,163 @@ mod tests {
             match_changes_zone(&opp_milled_event, &trigger, source, &state),
             "parsed Undead Alchemist trigger must fire when an opponent's creature is milled"
         );
+    }
+
+    /// CR 104.3a: match_loses_game fires when a PlayerLost event is received
+    /// and the losing player passes valid_player_matches (or no filter is set).
+    #[test]
+    fn loses_game_trigger_fires_on_player_lost_event() {
+        let mut state = setup();
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Withengar Unbound".to_string(),
+            Zone::Battlefield,
+        );
+
+        // Unscoped trigger (any player loses) — should fire for any player.
+        let mut trigger = make_trigger(TriggerMode::LosesGame);
+
+        let opp_lost = GameEvent::PlayerLost {
+            player_id: PlayerId(1),
+        };
+        assert!(
+            match_loses_game(&opp_lost, &trigger, source, &state),
+            "unscoped trigger must fire when any player loses"
+        );
+
+        let my_lost = GameEvent::PlayerLost {
+            player_id: PlayerId(0),
+        };
+        assert!(
+            match_loses_game(&my_lost, &trigger, source, &state),
+            "unscoped trigger must fire when controller loses"
+        );
+
+        // Non-PlayerLost event must not fire.
+        let non_lost = GameEvent::EffectResolved {
+            kind: EffectKind::Draw,
+            source_id: source,
+        };
+        assert!(
+            !match_loses_game(&non_lost, &trigger, source, &state),
+            "trigger must not fire for non-PlayerLost events"
+        );
+
+        // Controller-scoped trigger — only fires when controller loses.
+        trigger.valid_target = Some(TargetFilter::Controller);
+        assert!(
+            !match_loses_game(&opp_lost, &trigger, source, &state),
+            "controller-scoped trigger must not fire when opponent loses"
+        );
+        assert!(
+            match_loses_game(&my_lost, &trigger, source, &state),
+            "controller-scoped trigger must fire when controller loses"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // count_trigger_subjects_in_batch — building block for "one or more
+    // <FILTER> <verb>" batched-trigger subject counting (issue #707).
+    // -----------------------------------------------------------------------
+
+    fn make_dragon(state: &mut GameState, controller: PlayerId, name: &str) -> ObjectId {
+        let id = create_object(
+            state,
+            CardId(state.next_object_id),
+            controller,
+            name.to_string(),
+            Zone::Battlefield,
+        );
+        let obj = state.objects.get_mut(&id).unwrap();
+        obj.card_types.core_types.push(CoreType::Creature);
+        obj.card_types.subtypes.push("Dragon".to_string());
+        obj.base_card_types = obj.card_types.clone();
+        id
+    }
+
+    fn make_non_dragon(state: &mut GameState, controller: PlayerId, name: &str) -> ObjectId {
+        let id = create_object(
+            state,
+            CardId(state.next_object_id),
+            controller,
+            name.to_string(),
+            Zone::Battlefield,
+        );
+        let obj = state.objects.get_mut(&id).unwrap();
+        obj.card_types.core_types.push(CoreType::Creature);
+        obj.card_types.subtypes.push("Soldier".to_string());
+        obj.base_card_types = obj.card_types.clone();
+        id
+    }
+
+    /// CR 603.2c: `count_trigger_subjects_in_batch` filters
+    /// `AttackersDeclared.attacker_ids` against the trigger's `valid_card`
+    /// and returns the count — three Dragons among four attackers ⇒ 3.
+    #[test]
+    fn count_trigger_subjects_filters_attack_batch_by_subtype() {
+        let mut state = setup();
+        let source = make_dragon(&mut state, PlayerId(0), "Ur-Dragon");
+        let d2 = make_dragon(&mut state, PlayerId(0), "Helper A");
+        let d3 = make_dragon(&mut state, PlayerId(0), "Helper B");
+        let non = make_non_dragon(&mut state, PlayerId(0), "Lowly Soldier");
+        let event = GameEvent::AttackersDeclared {
+            attacker_ids: vec![source, d2, d3, non],
+            defending_player: PlayerId(1),
+            attacks: vec![],
+        };
+        let filter = TargetFilter::Typed(
+            TypedFilter::card()
+                .controller(ControllerRef::You)
+                .subtype("Dragon".to_string()),
+        );
+        let count = count_trigger_subjects_in_batch(
+            &state,
+            Some(&filter),
+            source,
+            std::slice::from_ref(&event),
+        );
+        assert_eq!(count, Some(3));
+    }
+
+    /// CR 603.2c: no `valid_card` ⇒ "that many" is undefined; callers fall
+    /// back to the existing `EventContextAmount` cascade.
+    #[test]
+    fn count_trigger_subjects_returns_none_without_filter() {
+        let state = setup();
+        let event = GameEvent::AttackersDeclared {
+            attacker_ids: vec![ObjectId(1), ObjectId(2)],
+            defending_player: PlayerId(1),
+            attacks: vec![],
+        };
+        let count = count_trigger_subjects_in_batch(
+            &state,
+            None,
+            ObjectId(99),
+            std::slice::from_ref(&event),
+        );
+        assert_eq!(count, None);
+    }
+
+    /// CR 603.2c: `SelfRef` is the "this permanent" reference — the trigger
+    /// source is its own subject and "that many" degenerates. The caller's
+    /// fallback chain (event-amount, then last_effect_count) is the right
+    /// path for self-referential batched triggers.
+    #[test]
+    fn count_trigger_subjects_returns_none_for_self_ref_filter() {
+        let state = setup();
+        let event = GameEvent::AttackersDeclared {
+            attacker_ids: vec![ObjectId(1)],
+            defending_player: PlayerId(1),
+            attacks: vec![],
+        };
+        let count = count_trigger_subjects_in_batch(
+            &state,
+            Some(&TargetFilter::SelfRef),
+            ObjectId(99),
+            std::slice::from_ref(&event),
+        );
+        assert_eq!(count, None);
     }
 }
