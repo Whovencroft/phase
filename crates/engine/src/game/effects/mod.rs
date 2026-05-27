@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use crate::game::filter;
 use crate::game::speed::has_max_speed;
 use crate::types::ability::{
-    AbilityCondition, AbilityCost, AbilityKind, ControllerRef, CostPaidObjectSnapshot, Effect,
-    EffectError, EffectKind, EffectOutcomeSignal, FilterProp, PlayerFilter, PlayerScope,
-    QuantityExpr, QuantityRef, RepeatContinuation, ResolvedAbility, SharedQuality,
-    SharedQualityRelation, SubAbilityLink, TargetFilter, TargetRef,
+    AbilityCondition, AbilityCost, AbilityKind, ControllerRef, CopyRetargetPermission,
+    CostPaidObjectSnapshot, Effect, EffectError, EffectKind, EffectOutcomeSignal, FilterProp,
+    PlayerFilter, PlayerScope, QuantityExpr, QuantityRef, RepeatContinuation, ResolvedAbility,
+    SharedQuality, SharedQualityRelation, SubAbilityLink, TargetFilter, TargetRef,
 };
 use crate::types::events::GameEvent;
 use crate::types::game_state::{
@@ -106,6 +106,7 @@ pub mod rad_counters;
 pub mod regenerate;
 pub mod register_bending;
 pub mod remove_from_combat;
+pub mod return_as_aura;
 pub mod reveal;
 pub mod reveal_from_hand;
 pub mod reveal_hand;
@@ -772,6 +773,7 @@ fn waits_for_resolution_choice(waiting_for: &WaitingFor) -> bool {
             | WaitingFor::RetargetChoice { .. }
             | WaitingFor::ChooseFromZoneChoice { .. }
             | WaitingFor::ChooseOneOfBranch { .. }
+            | WaitingFor::ReturnAsAuraTarget { .. }
             | WaitingFor::ChooseManaColor { .. }
             | WaitingFor::ManifestDreadChoice { .. }
             | WaitingFor::DiscardChoice { .. }
@@ -1358,6 +1360,7 @@ pub fn resolve_effect(
         Effect::DoublePTAll { .. } => pump::resolve_double_pt_all(state, ability, events),
         Effect::MoveCounters { .. } => counters::resolve_move(state, ability, events),
         Effect::Animate { .. } => animate::resolve(state, ability, events),
+        Effect::ReturnAsAura { .. } => return_as_aura::resolve(state, ability, events),
         Effect::RegisterBending { .. } => register_bending::resolve(state, ability, events),
         Effect::GenericEffect { .. } => effect::resolve(state, ability, events),
         Effect::Cleanup { .. } => cleanup::resolve(state, ability, events),
@@ -3202,13 +3205,43 @@ fn resolve_chain_body(
             // so that ability.chosen_x (the paid X value) is passed through. The
             // plain resolve_quantity path passes chosen_x=None, causing X to always
             // resolve to 0 and the loop to never execute (Torment of Hailfire bug).
-            let iterations = if member_driven {
+            let base_iterations = if member_driven {
                 iter_tracked_members.len()
             } else if let Some(ref qty) = ability.repeat_for {
                 crate::game::quantity::resolve_quantity_with_targets(state, qty, ability).max(0)
                     as usize
             } else {
                 1
+            };
+
+            // CR 707.10 + CR 614.1a: "copy an additional time" replacement
+            // effects (Twinning Staff) increase how many copies a copy-a-spell
+            // effect produces. Applied once here at the copy-count site because
+            // copies are created through this `repeat_for` loop, not the
+            // `ProposedEvent` replacement pipeline. The adjusted count flows into
+            // `total_iterations` and the resume stash below, so each additional
+            // copy runs the same per-copy retarget step as the base copies.
+            //
+            // `copy_count_status` guards against re-application: each per-copy
+            // retarget pause re-stashes a single-iteration resume ability that the
+            // drain driver feeds back through this code. Without the guard, every
+            // resumed iteration would re-add the bonus and the loop would explode
+            // into runaway copies (CR 614.5 — a replacement effect doesn't invoke
+            // itself repeatedly; it gets only one opportunity to affect an event,
+            // so the bonus applies to the copy event once, not per individual copy).
+            let iterations = if matches!(ability.effect, Effect::CopySpell { .. })
+                && ability.copy_count_status.is_pending()
+            {
+                copy_spell::copy_count_with_replacements(state, ability, base_iterations)
+            } else {
+                base_iterations
+            };
+            let replacement_added_copy_start = if matches!(ability.effect, Effect::CopySpell { .. })
+                && iterations > base_iterations
+            {
+                Some(base_iterations)
+            } else {
+                None
             };
 
             let initial_waiting_for = state.waiting_for.clone();
@@ -3224,10 +3257,20 @@ fn resolve_chain_body(
                 // case (two sequential object slots) has zero reachable card
                 // consumers and is deferred — see `effect_parent_ref_slots`.
                 let mut iter_ability;
+                let member = iter_tracked_members.get(iteration).copied();
+                let is_replacement_added_copy =
+                    replacement_added_copy_start.is_some_and(|start| iteration >= start);
                 let iter_effective: &ResolvedAbility =
-                    if let Some(member) = iter_tracked_members.get(iteration) {
+                    if member.is_some() || is_replacement_added_copy {
                         iter_ability = effective.clone();
-                        rebind_first_object_target(&mut iter_ability.targets, *member);
+                        if let Some(member) = member {
+                            rebind_first_object_target(&mut iter_ability.targets, member);
+                        }
+                        if let (true, Effect::CopySpell { retarget, .. }) =
+                            (is_replacement_added_copy, &mut iter_ability.effect)
+                        {
+                            *retarget = CopyRetargetPermission::MayChooseNewTargets;
+                        }
                         &iter_ability
                     } else {
                         effective
@@ -3261,6 +3304,13 @@ fn resolve_chain_body(
                         // owns iteration accounting via `next_iteration`.
                         let mut resume_ability = effective.clone();
                         resume_ability.repeat_for = None;
+                        // CR 614.5: the copy-count replacement bonus is already
+                        // folded into `total_iterations`; mark the resume so the
+                        // CopySpell count hook does not re-add it per resumed copy
+                        // (a replacement effect gets only one opportunity to affect
+                        // an event, so it must not re-fire on each resumed copy).
+                        resume_ability.copy_count_status =
+                            crate::types::ability::CopyCountStatus::Finalized;
                         state.pending_repeat_iteration =
                             Some(crate::types::game_state::PendingRepeatIteration {
                                 ability: Box::new(resume_ability),
