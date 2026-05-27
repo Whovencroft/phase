@@ -4626,6 +4626,18 @@ fn subject_is_opponent(subject: &TargetFilter) -> bool {
     )
 }
 
+fn parse_attachment_self_host(input: &str) -> OracleResult<'_, ()> {
+    value(
+        (),
+        alt((
+            tag::<_, _, OracleError<'_>>("~"),
+            tag("this creature"),
+            tag("this permanent"),
+        )),
+    )
+    .parse(input)
+}
+
 /// Try to parse an event verb and build a TriggerDefinition from subject + event.
 fn try_parse_event(
     subject: &TargetFilter,
@@ -5299,23 +5311,29 @@ fn try_parse_event(
                 }
             }
             SimpleEvent::BecomesAttached => {
-                // CR 701.3a: "Whenever [this Equipment/Aura] becomes attached to
-                // [a creature / a permanent]" — fires when an Attach or AttachAll
-                // effect resolves and the source is now attached to something.
-                // Non-self subjects need an event payload naming the object that
-                // became attached; EffectResolved only carries the ability source.
-                if !matches!(subject, TargetFilter::SelfRef) {
-                    return None;
-                }
+                // CR 701.3a: Attachment triggers share one data shape:
+                // valid_card = object that became attached, valid_target = host.
                 def.mode = TriggerMode::Attached;
                 def.valid_card = Some(subject.clone());
                 let remaining = remaining.trim();
-                if !remaining.is_empty() {
-                    let (filter, rest) = parse_type_phrase(remaining);
-                    if !rest.trim().is_empty() {
+                if matches!(subject, TargetFilter::SelfRef) {
+                    // Pattern 1: "Whenever ~ becomes attached to [host]"
+                    if !remaining.is_empty() {
+                        let (filter, rest) = parse_type_phrase(remaining);
+                        if !rest.trim().is_empty() {
+                            return None;
+                        }
+                        def.valid_target = Some(filter);
+                    }
+                } else {
+                    // Pattern 2: "Whenever [an Aura] becomes attached to ~"
+                    if all_consuming(parse_attachment_self_host)
+                        .parse(remaining)
+                        .is_err()
+                    {
                         return None;
                     }
-                    def.valid_target = Some(filter);
+                    def.valid_target = Some(TargetFilter::SelfRef);
                 }
             }
         }
@@ -5452,6 +5470,14 @@ fn try_parse_named_trigger_mode(lower: &str) -> Option<(TriggerMode, TriggerDefi
         return Some(result);
     }
 
+    // CR 104.3a: "Whenever [player] loses the game" — player-loss trigger.
+    if let Some(valid_target) = parse_loses_game_trigger(lower) {
+        let mut def = make_base();
+        def.mode = TriggerMode::LosesGame;
+        def.valid_target = valid_target;
+        return Some((TriggerMode::LosesGame, def));
+    }
+
     // CR 701.54d: "Whenever the Ring tempts you" / "When the Ring tempts you" —
     // the Ring temptation event fires once per temptation resolution.
     if all_consuming(pair(
@@ -5489,6 +5515,36 @@ fn parse_coin_flip_result_trigger(lower: &str) -> Option<(Option<TargetFilter>, 
     .parse(lower)
     .ok()?;
     Some((target, result))
+}
+
+fn parse_loses_game_trigger(lower: &str) -> Option<Option<TargetFilter>> {
+    let (_, target) = all_consuming(preceded(
+        alt((tag::<_, _, OracleError<'_>>("whenever "), tag("when "))),
+        parse_loses_game_actor,
+    ))
+    .parse(lower)
+    .ok()?;
+    Some(target)
+}
+
+fn parse_loses_game_actor(input: &str) -> OracleResult<'_, Option<TargetFilter>> {
+    let (rest, (target, third_person)) = alt((
+        value((Some(TargetFilter::Controller), false), tag("you ")),
+        value(
+            (
+                Some(TargetFilter::Typed(
+                    TypedFilter::default().controller(ControllerRef::Opponent),
+                )),
+                true,
+            ),
+            tag("an opponent "),
+        ),
+        value((Some(TargetFilter::Player), true), tag("a player ")),
+    ))
+    .parse(input)?;
+    let verb = if third_person { "loses" } else { "lose" };
+    let (rest, _) = pair(tag(verb), tag(" the game")).parse(rest)?;
+    Ok((rest, target))
 }
 
 fn try_parse_die_roll_trigger(lower: &str) -> Option<(TriggerMode, TriggerDefinition)> {
@@ -5736,6 +5792,94 @@ fn parse_damage_amount_quantifier(input: &str) -> OracleResult<'_, (Comparator, 
     alt((parse_exactly, parse_or_more)).parse(input)
 }
 
+/// CR 601.2a + CR 707.10: "When[ever] {actor} cast[s] or cop[ies] a[n] [type] spell"
+/// — unified parser for all SpellCastOrCopy trigger variants. `match_spell_cast`
+/// in trigger_matchers.rs validates the caster against `valid_target`, so:
+/// - "you cast or copy"       → `TargetFilter::Controller`
+/// - "an opponent casts or copies" → `TypedFilter` with `ControllerRef::Opponent`
+///   (evaluates as `source_controller != player_id` in the current engine model)
+/// - "a player casts or copies" → `TargetFilter::Player` (any player, CR 102.1)
+///
+/// Covers Storm-Kiln Artist (you), Mage Hunter (opponent), and any future card
+/// that triggers on any player casting or copying a spell.
+fn try_parse_casts_or_copies_trigger(lower: &str) -> Option<(TriggerMode, TriggerDefinition)> {
+    // CR 603.1: "When"/"Whenever" trigger keyword.
+    let (rest, _) = alt((
+        value((), tag::<_, _, OracleError<'_>>("whenever ")),
+        value((), tag("when ")),
+    ))
+    .parse(lower)
+    .ok()?;
+
+    // Actor + verb phrase — encodes caster identity in valid_target.
+    // `terminated` binds each actor tag to its conjugated verb so the two
+    // dimensions (who + action) are parsed as a single atomic combinator arm.
+    let (rest, caster_filter) = alt((
+        // "you cast or copy " — controller of the triggered permanent.
+        terminated(
+            value(
+                TargetFilter::Controller,
+                tag::<_, _, OracleError<'_>>("you"),
+            ),
+            tag(" cast or copy "),
+        ),
+        // "An opponent" uses the engine's existing opponent controller filter.
+        terminated(
+            value(
+                TargetFilter::Typed(TypedFilter::default().controller(ControllerRef::Opponent)),
+                tag::<_, _, OracleError<'_>>("an opponent"),
+            ),
+            tag(" casts or copies "),
+        ),
+        // "a player" in Oracle means any player including the controller (CR 102.1).
+        terminated(
+            value(TargetFilter::Player, tag("a player")),
+            tag(" casts or copies "),
+        ),
+    ))
+    .parse(rest)
+    .ok()?;
+
+    // CR 601.2a + CR 707.10: optional spell-type restriction.
+    // `terminated(..., tag(" spell"))` avoids repeating the trailing word across arms.
+    let (_, spell_filter) = terminated(
+        alt((
+            value(
+                Some(TargetFilter::Or {
+                    filters: vec![
+                        TargetFilter::Typed(TypedFilter::new(TypeFilter::Instant)),
+                        TargetFilter::Typed(TypedFilter::new(TypeFilter::Sorcery)),
+                    ],
+                }),
+                tag::<_, _, OracleError<'_>>("an instant or sorcery"),
+            ),
+            value(
+                Some(TargetFilter::Typed(TypedFilter::new(TypeFilter::Creature))),
+                tag("a creature"),
+            ),
+            value(
+                Some(TargetFilter::Typed(TypedFilter::new(TypeFilter::Instant))),
+                tag("an instant"),
+            ),
+            value(
+                Some(TargetFilter::Typed(TypedFilter::new(TypeFilter::Sorcery))),
+                tag("a sorcery"),
+            ),
+            // Generic — any spell, no type restriction.
+            value(None, tag("a")),
+        )),
+        tag(" spell"),
+    )
+    .parse(rest)
+    .ok()?;
+
+    let mut def = make_base();
+    def.mode = TriggerMode::SpellCastOrCopy;
+    def.valid_card = spell_filter;
+    def.valid_target = Some(caster_filter);
+    Some((TriggerMode::SpellCastOrCopy, def))
+}
+
 fn try_parse_special_trigger_pattern(lower: &str) -> Option<(TriggerMode, TriggerDefinition)> {
     if let Some(result) = try_parse_self_or_another_controlled_subtype_enters(lower) {
         return Some(result);
@@ -5938,24 +6082,10 @@ fn try_parse_special_trigger_pattern(lower: &str) -> Option<(TriggerMode, Trigge
         }
     }
 
-    for prefix in ["whenever you cast or copy ", "when you cast or copy "] {
-        if let Ok((rest, ())) = value((), tag::<_, _, OracleError<'_>>(prefix)).parse(lower) {
-            if matches!(
-                rest,
-                "an instant or sorcery spell" | "a instant or sorcery spell"
-            ) {
-                let mut def = make_base();
-                def.mode = TriggerMode::SpellCastOrCopy;
-                def.valid_card = Some(TargetFilter::Or {
-                    filters: vec![
-                        TargetFilter::Typed(TypedFilter::new(TypeFilter::Instant)),
-                        TargetFilter::Typed(TypedFilter::new(TypeFilter::Sorcery)),
-                    ],
-                });
-                def.valid_target = Some(TargetFilter::Controller);
-                return Some((TriggerMode::SpellCastOrCopy, def));
-            }
-        }
+    // CR 601.2a + CR 707.10: all "cast or copy a spell" trigger variants —
+    // covers "you", "an opponent", and "a player" actor phrases.
+    if let Some(result) = try_parse_casts_or_copies_trigger(lower) {
+        return Some(result);
     }
 
     // CR 700.4 + CR 120.1: "a creature dealt damage by ~ this turn dies"
@@ -15207,6 +15337,61 @@ mod tests {
         assert_eq!(def.valid_target, Some(TargetFilter::Controller));
     }
 
+    // CR 601.2a + CR 707.10: try_parse_casts_or_copies_trigger — all actor variants.
+
+    #[test]
+    fn trigger_opponent_casts_or_copies_instant_or_sorcery() {
+        // Mage Hunter: "Whenever an opponent casts or copies an instant or sorcery spell,
+        // they lose 1 life." — SpellCastOrCopy with opponent-controller restriction.
+        let def = parse_trigger_line(
+            "Whenever an opponent casts or copies an instant or sorcery spell, that player loses 1 life.",
+            "Mage Hunter",
+        );
+        assert_eq!(def.mode, TriggerMode::SpellCastOrCopy);
+        assert!(
+            matches!(
+                def.valid_target,
+                Some(TargetFilter::Typed(ref t)) if matches!(t.controller, Some(ControllerRef::Opponent))
+            ),
+            "expected Opponent-controller TypedFilter in valid_target, got {:?}",
+            def.valid_target
+        );
+        assert!(
+            matches!(def.valid_card, Some(TargetFilter::Or { .. })),
+            "expected Or{{Instant, Sorcery}} in valid_card, got {:?}",
+            def.valid_card
+        );
+    }
+
+    #[test]
+    fn trigger_opponent_casts_or_copies_any_spell() {
+        let def = parse_trigger_line(
+            "Whenever an opponent casts or copies a spell, draw a card.",
+            "Test Card",
+        );
+        assert_eq!(def.mode, TriggerMode::SpellCastOrCopy);
+        assert!(
+            matches!(
+                def.valid_target,
+                Some(TargetFilter::Typed(ref t)) if matches!(t.controller, Some(ControllerRef::Opponent))
+            ),
+            "expected Opponent-controller TypedFilter, got {:?}",
+            def.valid_target
+        );
+        assert_eq!(def.valid_card, None);
+    }
+
+    #[test]
+    fn trigger_a_player_casts_or_copies_a_spell() {
+        let def = parse_trigger_line(
+            "Whenever a player casts or copies a spell, you gain 1 life.",
+            "Test Card",
+        );
+        assert_eq!(def.mode, TriggerMode::SpellCastOrCopy);
+        assert_eq!(def.valid_target, Some(TargetFilter::Player));
+        assert_eq!(def.valid_card, None);
+    }
+
     #[test]
     fn trigger_unlock_door_mode() {
         let def = parse_trigger_line("When you unlock this door, draw a card.", "Door");
@@ -15382,10 +15567,10 @@ mod tests {
         );
 
         let sub_ability = execute.sub_ability.as_ref().expect("If you do sub-ability");
-        assert!(matches!(
-            sub_ability.condition,
-            Some(AbilityCondition::IfYouDo)
-        ));
+        assert!(sub_ability
+            .condition
+            .as_ref()
+            .is_some_and(AbilityCondition::is_optional_effect_performed));
         let Effect::GenericEffect {
             static_abilities, ..
         } = sub_ability.effect.as_ref()
@@ -17238,7 +17423,7 @@ mod tests {
 
         assert_eq!(
             sub.condition,
-            Some(AbilityCondition::IfYouDo),
+            Some(AbilityCondition::effect_performed()),
             "sub-ability must be gated by IfYouDo so it only fires when the player accepted"
         );
         assert!(
@@ -19236,7 +19421,7 @@ mod tests {
         assert_eq!(
             sub.condition,
             Some(AbilityCondition::Not {
-                condition: Box::new(AbilityCondition::IfYouDo)
+                condition: Box::new(AbilityCondition::effect_performed())
             })
         );
         match &*sub.effect {
@@ -20934,6 +21119,99 @@ mod snapshot_tests {
         assert!(def.valid_card.is_some());
     }
 
+    /// CR 701.3a Pattern 2: "Whenever an Aura becomes attached to ~" —
+    /// the subject is the Aura (not self-ref), the host is the trigger source.
+    /// Cards: Bramble Elemental, Brood Keeper.
+    #[test]
+    fn trigger_an_aura_becomes_attached_to_self() {
+        let def = parse_trigger_line(
+            "Whenever an Aura becomes attached to ~, create two 1/1 green Saproling creature tokens.",
+            "Bramble Elemental",
+        );
+        assert_eq!(def.mode, TriggerMode::Attached);
+        let Some(TargetFilter::Typed(tf)) = &def.valid_card else {
+            panic!("expected typed Aura filter, got {:?}", def.valid_card);
+        };
+        assert!(
+            tf.type_filters
+                .contains(&crate::types::ability::TypeFilter::Subtype(
+                    "Aura".to_string()
+                )),
+            "filter must restrict to Aura subtype, got {:?}",
+            tf.type_filters
+        );
+        assert_eq!(def.valid_target, Some(TargetFilter::SelfRef));
+    }
+
+    /// CR 701.3a Pattern 2: Brood Keeper uses the same phrase.
+    #[test]
+    fn trigger_an_aura_becomes_attached_to_self_brood_keeper() {
+        let def = parse_trigger_line(
+            "Whenever an Aura becomes attached to ~, create a 2/2 red Dragon creature token with flying. It has \"{R}: This creature gets +1/+0 until end of turn.\"",
+            "Brood Keeper",
+        );
+        assert_eq!(def.mode, TriggerMode::Attached);
+        assert!(def.valid_card.is_some(), "Aura filter must be set");
+        assert_eq!(def.valid_target, Some(TargetFilter::SelfRef));
+    }
+
+    /// CR 104.3a: "Whenever a player loses the game" — Withengar Unbound,
+    /// Ramses Assassin Lord, Blood Tyrant. The explicit player subject is
+    /// represented as a player filter so the trigger's player axis is typed.
+    #[test]
+    fn trigger_a_player_loses_the_game() {
+        let def = parse_trigger_line(
+            "Whenever a player loses the game, put thirteen +1/+1 counters on this creature.",
+            "Withengar Unbound",
+        );
+        assert_eq!(
+            def.mode,
+            TriggerMode::LosesGame,
+            "expected LosesGame mode, got {:?}",
+            def.mode
+        );
+        assert_eq!(
+            def.valid_target,
+            Some(TargetFilter::Player),
+            "valid_target must represent the player-loss subject"
+        );
+    }
+
+    /// CR 104.3a: "Whenever an opponent loses the game" — scopes to opponent
+    /// players only via a controller filter.
+    #[test]
+    fn trigger_an_opponent_loses_the_game() {
+        let def = parse_trigger_line(
+            "Whenever an opponent loses the game, you win the game.",
+            "SomeCard",
+        );
+        assert_eq!(
+            def.mode,
+            TriggerMode::LosesGame,
+            "expected LosesGame mode, got {:?}",
+            def.mode
+        );
+        assert_eq!(
+            def.valid_target,
+            Some(TargetFilter::Typed(
+                TypedFilter::default().controller(ControllerRef::Opponent)
+            )),
+            "valid_target must restrict to opponents"
+        );
+    }
+
+    /// CR 104.3a: "Whenever you lose the game" uses the same parser family and
+    /// scopes the losing player to the trigger controller.
+    #[test]
+    fn trigger_you_lose_the_game() {
+        let def = parse_trigger_line(
+            "When you lose the game, draw a card.",
+            "Platinum Contraption",
+        );
+        assert_eq!(def.mode, TriggerMode::LosesGame);
+        assert_eq!(def.valid_target, Some(TargetFilter::Controller));
+    }
+
     /// CR 701.30b-c: "Whenever you clash" scopes to the trigger controller as
     /// either player participating in the clash.
     /// Cards: Entangling Trap, Rebellion of the Flamekin.
@@ -20969,7 +21247,7 @@ mod snapshot_tests {
         let Some(token) = pay_cost.sub_ability.as_deref() else {
             panic!("expected if-you-do token tail");
         };
-        assert_eq!(token.condition, Some(AbilityCondition::IfYouDo));
+        assert_eq!(token.condition, Some(AbilityCondition::effect_performed()));
         let Some(haste) = token.sub_ability.as_deref() else {
             panic!("expected if-you-won haste tail");
         };
