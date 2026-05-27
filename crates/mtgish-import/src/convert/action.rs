@@ -610,6 +610,7 @@ fn rewrite_any_target_filter_in_effect(effect: &mut Effect, typed: &TargetFilter
         | Effect::CastFromZone { ref mut target, .. }
         | Effect::ChangeZone { ref mut target, .. }
         | Effect::ChangeZoneAll { ref mut target, .. }
+        | Effect::ChangeTargets { ref mut target, .. }
         | Effect::ChooseCard { ref mut target, .. }
         | Effect::Connive { ref mut target, .. }
         | Effect::ControlNextTurn { ref mut target, .. }
@@ -621,6 +622,7 @@ fn rewrite_any_target_filter_in_effect(effect: &mut Effect, typed: &TargetFilter
         | Effect::Destroy { ref mut target, .. }
         | Effect::DestroyAll { ref mut target, .. }
         | Effect::Detain { ref mut target, .. }
+        | Effect::Discard { ref mut target, .. }
         | Effect::DiscardCard { ref mut target, .. }
         | Effect::Double { ref mut target, .. }
         | Effect::DoublePT { ref mut target, .. }
@@ -645,6 +647,7 @@ fn rewrite_any_target_filter_in_effect(effect: &mut Effect, typed: &TargetFilter
         | Effect::PairWith { ref mut target, .. }
         | Effect::PhaseIn { ref mut target, .. }
         | Effect::PhaseOut { ref mut target, .. }
+        | Effect::PreventDamage { ref mut target, .. }
         | Effect::Pump { ref mut target, .. }
         | Effect::PumpAll { ref mut target, .. }
         | Effect::PutAtLibraryPosition { ref mut target, .. }
@@ -7098,6 +7101,35 @@ mod tests {
             .type_filters
             .iter()
             .any(|filter| matches!(filter, TypeFilter::Creature)));
+    }
+
+    #[test]
+    fn targeted_wrapper_rewrite_covers_prevention_and_discard_targets() {
+        let typed = TargetFilter::Typed(TypedFilter::creature());
+        let mut effects = vec![
+            Effect::PreventDamage {
+                amount: engine::types::ability::PreventionAmount::Next(1),
+                amount_dynamic: None,
+                target: TargetFilter::Any,
+                scope: Default::default(),
+                damage_source_filter: None,
+            },
+            Effect::Discard {
+                count: QuantityExpr::Fixed { value: 1 },
+                target: TargetFilter::Any,
+                random: false,
+                unless_filter: None,
+                filter: None,
+            },
+        ];
+
+        for effect in &mut effects {
+            rewrite_any_target_filter_in_effect(effect, &typed);
+        }
+
+        for effect in effects {
+            assert_eq!(effect.target_filter(), Some(&typed));
+        }
     }
 
     #[test]
