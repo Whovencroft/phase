@@ -5123,6 +5123,8 @@ fn try_parse_event(
     fn parse_simple_event(input: &str) -> OracleResult<'_, SimpleEvent> {
         alt((
             value(SimpleEvent::BecomesBlocked, tag("becomes blocked")),
+            // CR 509.1h: Plural form for batched "one or more ... become blocked" triggers.
+            value(SimpleEvent::BecomesBlocked, tag("become blocked")),
             // CR 702.171b: Mount becomes saddled (saddled designation acquired).
             value(SimpleEvent::BecomesSaddled, tag("becomes saddled")),
             // CR 702.122d: "Whenever [this Vehicle] becomes crewed" — trigger fires
@@ -5132,6 +5134,11 @@ fn try_parse_event(
             value(
                 SimpleEvent::BecomesTargetSpellOrAbility,
                 tag("becomes the target of a spell or ability"),
+            ),
+            // CR 115.1: Plural form for batched "become the target" triggers.
+            value(
+                SimpleEvent::BecomesTargetSpellOrAbility,
+                tag("become the target of a spell or ability"),
             ),
             value(
                 SimpleEvent::BecomesTargetSpell {
@@ -5149,12 +5156,23 @@ fn try_parse_event(
                 SimpleEvent::DealtCombatDamage,
                 tag("is dealt combat damage"),
             ),
+            // CR 120.2: Plural form for batched "are dealt combat damage" triggers.
+            value(
+                SimpleEvent::DealtCombatDamage,
+                tag("are dealt combat damage"),
+            ),
             value(SimpleEvent::DealtDamage, tag("is dealt damage")),
+            // CR 120.2: Plural form for batched "are dealt damage" triggers.
+            value(SimpleEvent::DealtDamage, tag("are dealt damage")),
             value(SimpleEvent::BecomesTapped, tag("becomes tapped")),
+            // CR 701.21: Plural form for batched "one or more ... become tapped" triggers.
+            value(SimpleEvent::BecomesTapped, tag("become tapped")),
             value(SimpleEvent::TappedForMana, tag("is tapped for mana")),
         ))
         .or(alt((
             value(SimpleEvent::BecomesUntapped, tag("becomes untapped")),
+            // CR 701.21: Plural form for batched "one or more ... become untapped" triggers.
+            value(SimpleEvent::BecomesUntapped, tag("become untapped")),
             value(SimpleEvent::BecomesUntapped, tag("untaps")),
             value(SimpleEvent::TurnFaceUp, tag("is turned face up")),
             // CR 701.37b: "When ~ becomes monstrous" trigger event.
@@ -12381,6 +12399,37 @@ mod tests {
         );
         assert_eq!(def.mode, TriggerMode::Taps);
         assert_eq!(def.valid_card, Some(TargetFilter::SelfRef));
+    }
+
+    /// CR 701.21 + CR 603.2c: Batched plural form "become tapped" for
+    /// "Whenever one or more nontoken Merfolk you control become tapped" —
+    /// Deeproot Pilgrimage.
+    #[test]
+    fn trigger_one_or_more_become_tapped() {
+        let def = parse_trigger_line(
+            "Whenever one or more nontoken Merfolk you control become tapped, create a 1/1 blue Merfolk creature token with hexproof.",
+            "Deeproot Pilgrimage",
+        );
+        assert_eq!(def.mode, TriggerMode::Taps);
+        assert!(def.batched);
+        // valid_card should be a Typed filter for nontoken Merfolk you control
+        match &def.valid_card {
+            Some(TargetFilter::Typed(tf)) => {
+                assert_eq!(tf.controller, Some(ControllerRef::You));
+                assert!(
+                    tf.type_filters.is_empty() || tf.type_filters.contains(&TypeFilter::Creature)
+                );
+                // Should have NonToken property and Merfolk subtype
+                assert!(
+                    tf.properties
+                        .iter()
+                        .any(|p| matches!(p, FilterProp::NonToken)),
+                    "expected NonToken property, got {:?}",
+                    tf.properties
+                );
+            }
+            other => panic!("expected Typed filter, got {other:?}"),
+        }
     }
 
     #[test]
