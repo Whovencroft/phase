@@ -576,6 +576,12 @@ pub enum Keyword {
     Entwine(ManaCost),
     Outlast(ManaCost),
     Scavenge(ManaCost),
+    /// CR 702.77a: Reinforce N—[cost] means "[Cost], Discard this card:
+    /// Put N +1/+1 counters on target creature."
+    Reinforce {
+        count: u32,
+        cost: ManaCost,
+    },
     Fortify(ManaCost),
     /// RUNTIME: TODO — converter accepts this keyword but engine has no
     /// behavioral handler. CR 702.160a: Prototype — alt-cast using the
@@ -1062,6 +1068,7 @@ impl Keyword {
             | Keyword::Ravenous
             | Keyword::ReadAhead
             | Keyword::Rebound
+            | Keyword::Reinforce { .. }
             | Keyword::Ripple
             | Keyword::Saddle(_)
             | Keyword::Scavenge(_)
@@ -1529,6 +1536,21 @@ impl FromStr for Keyword {
                 "echo" => return Ok(Keyword::Echo(parse_keyword_mana_cost(p))),
                 "outlast" => return Ok(Keyword::Outlast(parse_keyword_mana_cost(p))),
                 "scavenge" => return Ok(Keyword::Scavenge(parse_keyword_mana_cost(p))),
+                "reinforce" => {
+                    // CR 702.77a: "Reinforce N\u{2014}[cost]" \u{2014} N is the first token, rest is mana cost.
+                    let p = p.trim();
+                    if let Some((n_str, cost_str)) = p.split_once(' ') {
+                        let count = n_str.trim().parse::<u32>().unwrap_or(1);
+                        let cost = parse_keyword_mana_cost(cost_str.trim());
+                        return Ok(Keyword::Reinforce { count, cost });
+                    } else if let Ok(count) = p.parse::<u32>() {
+                        return Ok(Keyword::Reinforce {
+                            count,
+                            cost: ManaCost::zero(),
+                        });
+                    }
+                    // Fall through to Unknown
+                }
                 "fortify" => return Ok(Keyword::Fortify(parse_keyword_mana_cost(p))),
                 "prototype" => return Ok(Keyword::Prototype(parse_keyword_mana_cost(p))),
                 "plot" => return Ok(Keyword::Plot(parse_keyword_mana_cost(p))),
@@ -2147,6 +2169,14 @@ fn keyword_from_tagged(variant: &str, data: &serde_json::Value) -> Result<Keywor
         "Echo" => Ok(Keyword::Echo(mana(data)?)),
         "Outlast" => Ok(Keyword::Outlast(mana(data)?)),
         "Scavenge" => Ok(Keyword::Scavenge(mana(data)?)),
+        // CR 702.77a: Reinforce N—[cost]. Data is { "count": N, "cost": "..." }.
+        "Reinforce" => {
+            let obj = data.as_object().ok_or("Reinforce: expected object")?;
+            let count = obj.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+            let cost_val = obj.get("cost").unwrap_or(data);
+            let cost = mana(cost_val)?;
+            Ok(Keyword::Reinforce { count, cost })
+        }
         "Fortify" => Ok(Keyword::Fortify(mana(data)?)),
         "Prototype" => Ok(Keyword::Prototype(mana(data)?)),
         "Plot" => Ok(Keyword::Plot(mana(data)?)),
