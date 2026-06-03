@@ -3226,7 +3226,7 @@ pub(super) fn match_phase_in(
         false
     }
 }
-/// CR 702.26f: Matches when a permanent phases out.
+/// CR 702.26b: Matches when a permanent phases out.
 /// Uses phased-out-aware filter because the object's phase_status is already
 /// set to PhasedOut when this event fires (see `phase_out_object`).
 pub(super) fn match_phase_out(
@@ -6802,8 +6802,14 @@ mod tests {
 
     #[test]
     fn phase_out_matcher_registered_and_matches_source() {
-        let state = setup();
-        let source = ObjectId(1);
+        let mut state = setup();
+        let source = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Teferi's Imp Stand-In".to_string(),
+            Zone::Battlefield,
+        );
         let trigger = make_trigger(TriggerMode::PhaseOut);
         let registry = build_trigger_registry();
 
@@ -6824,6 +6830,22 @@ mod tests {
                 indirect: false,
             },
             &trigger,
+            source,
+            &state
+        ));
+
+        let self_ref_trigger =
+            make_trigger(TriggerMode::PhaseOut).valid_card(TargetFilter::SelfRef);
+        state.objects.get_mut(&source).unwrap().phase_status =
+            crate::game::game_object::PhaseStatus::PhasedOut {
+                cause: crate::game::game_object::PhaseOutCause::Directly,
+            };
+        assert!(match_phase_out(
+            &GameEvent::PermanentPhasedOut {
+                object_id: source,
+                indirect: false,
+            },
+            &self_ref_trigger,
             source,
             &state
         ));

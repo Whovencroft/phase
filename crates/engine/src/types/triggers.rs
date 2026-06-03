@@ -159,7 +159,7 @@ pub enum TriggerEventKey {
     Fight,
     /// CR 702.26c: A permanent phased in.
     PhaseIn,
-    /// CR 702.26f: A permanent phased out.
+    /// CR 702.26b: A permanent phased out.
     PhaseOut,
 }
 
