@@ -265,7 +265,8 @@ pub(crate) fn keys_from_trigger_def(def: &TriggerDefinition) -> (Keys, bool) {
         },
         // CR 702.26c: Phasing triggers fire when a permanent phases in.
         TriggerMode::PhaseIn => push(TriggerEventKey::PhaseIn),
-        TriggerMode::PhaseOut | TriggerMode::PhaseOutAll => {
+        TriggerMode::PhaseOut => push(TriggerEventKey::PhaseOut),
+        TriggerMode::PhaseOutAll => {
             return (keys, true);
         }
         TriggerMode::TurnBegin => push(TriggerEventKey::TurnStarted),
@@ -515,9 +516,8 @@ fn keys_from_event(event: &GameEvent, state: &GameState) -> Keys {
         GameEvent::PermanentUntapped { .. } => push(TriggerEventKey::Untaps),
         // CR 702.26c: Phasing triggers fire when a permanent phases in.
         GameEvent::PermanentPhasedIn { .. } => push(TriggerEventKey::PhaseIn),
-        GameEvent::PermanentPhasedOut { .. }
-        | GameEvent::PlayerPhasedOut { .. }
-        | GameEvent::PlayerPhasedIn { .. } => {}
+        GameEvent::PermanentPhasedOut { .. } => push(TriggerEventKey::PhaseOut),
+        GameEvent::PlayerPhasedOut { .. } | GameEvent::PlayerPhasedIn { .. } => {}
         GameEvent::LandPlayed { .. } => {}
         GameEvent::StackPushed { .. } | GameEvent::StackResolved { .. } => {}
         GameEvent::Discarded { .. } => push(TriggerEventKey::Discarded),
@@ -999,5 +999,23 @@ mod tests {
             &state,
         );
         assert!(event_keys.contains(&TriggerEventKey::PhaseIn));
+    }
+
+    #[test]
+    fn phase_out_uses_narrow_trigger_key_for_def_and_event() {
+        let def = TriggerDefinition::new(TriggerMode::PhaseOut);
+        let (keys, route) = keys_from_trigger_def(&def);
+        assert!(keys.contains(&TriggerEventKey::PhaseOut));
+        assert!(!route);
+
+        let state = GameState::new_two_player(42);
+        let event_keys = keys_from_event(
+            &GameEvent::PermanentPhasedOut {
+                object_id: crate::types::identifiers::ObjectId(1),
+                indirect: false,
+            },
+            &state,
+        );
+        assert!(event_keys.contains(&TriggerEventKey::PhaseOut));
     }
 }
