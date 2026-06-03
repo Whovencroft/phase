@@ -265,10 +265,7 @@ pub(crate) fn keys_from_trigger_def(def: &TriggerDefinition) -> (Keys, bool) {
         },
         // CR 702.26c: Phasing triggers fire when a permanent phases in.
         TriggerMode::PhaseIn => push(TriggerEventKey::PhaseIn),
-        TriggerMode::PhaseOut => push(TriggerEventKey::PhaseOut),
-        TriggerMode::PhaseOutAll => {
-            return (keys, true);
-        }
+        TriggerMode::PhaseOut | TriggerMode::PhaseOutAll => push(TriggerEventKey::PhaseOut),
         TriggerMode::TurnBegin => push(TriggerEventKey::TurnStarted),
         TriggerMode::NewGame => return (keys, true),
 

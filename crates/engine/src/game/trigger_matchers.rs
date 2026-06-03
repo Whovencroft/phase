@@ -3184,7 +3184,9 @@ pub(super) fn match_phase_in(
         false
     }
 }
-/// CR 702.26b: Matches when a permanent phases out.
+/// CR 702.26f: Matches when a permanent phases out.
+/// Uses phased-out-aware filter because the object's phase_status is already
+/// set to PhasedOut when this event fires (see `phase_out_object`).
 pub(super) fn match_phase_out(
     event: &GameEvent,
     trigger: &TriggerDefinition,
@@ -3192,8 +3194,11 @@ pub(super) fn match_phase_out(
     state: &GameState,
 ) -> bool {
     if let GameEvent::PermanentPhasedOut { object_id, .. } = event {
-        if trigger.valid_card.is_some() {
-            valid_card_matches(trigger, state, *object_id, source_id)
+        if let Some(filter) = &trigger.valid_card {
+            let ctx = super::filter::FilterContext::from_source(state, source_id);
+            super::filter::matches_target_filter_including_phased_out(
+                state, *object_id, filter, &ctx,
+            )
         } else {
             *object_id == source_id
         }
