@@ -308,6 +308,9 @@ pub enum NextSpellModifier {
     HasKeyword { keyword: Keyword },
     /// "The next spell you cast this turn can be cast as though it had flash."
     CastAsThoughFlash,
+    /// CR 118.9a: "The next [filter] spell you cast this turn can be cast without
+    /// paying its mana cost." Additional costs still apply (CR 118.8).
+    WithoutPayingManaCost,
 }
 
 /// CR 400.7: Snapshot of an object's properties at the time of a zone change,
@@ -1716,6 +1719,13 @@ pub enum PayCostKind {
     /// Exile objects from the specified zone.
     ExileFromZone {
         zone: ExileCostSourceZone,
+    },
+    /// CR 702.167a/b: Exile craft materials chosen from the union of the
+    /// battlefield (permanents you control) and your graveyard. `materials` is
+    /// the dual-zone `TargetFilter` the choices were drawn from; the handler
+    /// re-validates eligibility against it before exiling.
+    ExileMaterials {
+        materials: TargetFilter,
     },
     /// Exile objects from any zone (mana-ability exile costs).
     ExileFromManaZone {
@@ -3589,6 +3599,10 @@ pub enum CastingVariant {
     /// CR 702.127a: Cast an aftermath half of a split card from a graveyard.
     /// If it was cast from a graveyard, exile it any time it leaves the stack.
     Aftermath,
+    /// CR 702.146a-b + CR 712.8c: Cast transformed from graveyard for disturb
+    /// cost. The stack spell uses its back-face characteristics and the
+    /// permanent enters the battlefield back face up on resolution.
+    Disturb,
     /// CR 601.2a: Cast from graveyard via a static permission source (e.g. Lurrus).
     /// Stores the granting permanent's ObjectId for per-turn tracking.
     /// CR 400.7: Zone change creates new ObjectId, naturally resetting permission.
@@ -3768,6 +3782,40 @@ impl CastingVariant {
         *self == CastingVariant::Normal
     }
 
+    /// CR 118.9a: Only one alternative cost can be applied to a spell.
+    pub fn uses_alternative_cost(self) -> bool {
+        match self {
+            CastingVariant::Warp
+            | CastingVariant::Escape
+            | CastingVariant::Harmonize
+            | CastingVariant::Flashback
+            | CastingVariant::HandPermission { .. }
+            | CastingVariant::Sneak { .. }
+            | CastingVariant::WebSlinging { .. }
+            | CastingVariant::Miracle
+            | CastingVariant::Madness
+            | CastingVariant::Evoke
+            | CastingVariant::Suspend
+            | CastingVariant::Plot
+            | CastingVariant::Foretell
+            | CastingVariant::Overload
+            | CastingVariant::Bestow
+            | CastingVariant::Awaken
+            | CastingVariant::Cleave
+            | CastingVariant::MoreThanMeetsTheEye
+            | CastingVariant::Disturb
+            | CastingVariant::Impending
+            | CastingVariant::Prototype => true,
+            CastingVariant::Normal
+            | CastingVariant::Adventure
+            | CastingVariant::Omen
+            | CastingVariant::Retrace
+            | CastingVariant::Aftermath
+            | CastingVariant::GraveyardPermission { .. }
+            | CastingVariant::ExilePermission { .. } => false,
+        }
+    }
+
     pub fn exiles_when_leaving_stack_for_any_reason(self) -> bool {
         matches!(
             self,
@@ -3799,7 +3847,10 @@ impl CastingVariant {
     pub fn restores_front_face_after_stack_exit(self) -> bool {
         matches!(
             self,
-            CastingVariant::Adventure | CastingVariant::Omen | CastingVariant::MoreThanMeetsTheEye
+            CastingVariant::Adventure
+                | CastingVariant::Omen
+                | CastingVariant::MoreThanMeetsTheEye
+                | CastingVariant::Disturb
         )
     }
 }
