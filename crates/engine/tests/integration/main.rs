@@ -142,6 +142,7 @@ mod terra_magical_adept_milled_enchantment;
 mod the_chain_veil_loyalty_grants;
 mod the_ur_dragon_eminence;
 mod thoughtweft_trample_regression;
+mod throne_god_pharaoh_life_loss;
 mod timely_ward_regression;
 mod tinybones_joins_up_multi_target;
 mod tombstone_stairwell_per_player_tokens;
