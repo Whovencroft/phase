@@ -293,7 +293,8 @@ fn snapshot_parent_dependent_quantities(
         // frozen at delayed trigger creation time (before step transition
         // clears the LKI cache).
         Effect::ChangeZone {
-            enter_with_counters, ..
+            enter_with_counters,
+            ..
         } => {
             for (_, qty) in enter_with_counters.iter_mut() {
                 snapshot_quantity_expr(qty, state, ability);
@@ -447,10 +448,7 @@ fn snapshot_quantity_ref(
                 }
             }
             live.map(|obj| {
-                crate::game::quantity::counter_count_from_map(
-                    &obj.counters,
-                    counter_type.as_ref(),
-                )
+                crate::game::quantity::counter_count_from_map(&obj.counters, counter_type.as_ref())
             })
         }
         _ => None,
