@@ -368,6 +368,32 @@ fn snapshot_quantity_ref(
     ability: &ResolvedAbility,
 ) -> Option<i32> {
     use crate::types::ability::ObjectScope;
+    // CR 603.7c + CR 400.7: CountersOn { Source } uses ability.source_id,
+    // not targets — handle it before the target_object_id extraction which
+    // early-returns None when targets is empty (common for dies triggers).
+    if let QuantityRef::CountersOn {
+        scope: ObjectScope::Source,
+        counter_type,
+    } = qty
+    {
+        let source_id = ability.source_id;
+        // Mirrors resolve_counters_on_scope (quantity.rs:2778): live first,
+        // LKI fallback.
+        let live = state.objects.get(&source_id);
+        let on_battlefield =
+            live.is_some_and(|obj| obj.zone == crate::types::zones::Zone::Battlefield);
+        if !on_battlefield {
+            if let Some(lki) = state.lki_cache.get(&source_id) {
+                return Some(crate::game::quantity::counter_count_from_map(
+                    &lki.counters,
+                    counter_type.as_ref(),
+                ));
+            }
+        }
+        return live.map(|obj| {
+            crate::game::quantity::counter_count_from_map(&obj.counters, counter_type.as_ref())
+        });
+    }
     let target_object_id = ability.targets.iter().find_map(|t| match t {
         TargetRef::Object(id) => Some(*id),
         _ => None,
@@ -423,33 +449,6 @@ fn snapshot_quantity_ref(
                 &filter_ctx,
             )
             .or(Some(0))
-        }
-        // CR 603.7c + CR 400.7: Snapshot the source object's counter count from
-        // LKI at delayed trigger creation time. At resolution time (next end
-        // step), the LKI cache will have been cleared by step transition
-        // (turns.rs:417). `ability.source_id` is the parent dies trigger's
-        // source = the dying creature.
-        QuantityRef::CountersOn {
-            scope: ObjectScope::Source,
-            counter_type,
-        } => {
-            let source_id = ability.source_id;
-            // Mirrors resolve_counters_on_scope (quantity.rs:2778): live first,
-            // LKI fallback.
-            let live = state.objects.get(&source_id);
-            let on_battlefield =
-                live.is_some_and(|obj| obj.zone == crate::types::zones::Zone::Battlefield);
-            if !on_battlefield {
-                if let Some(lki) = state.lki_cache.get(&source_id) {
-                    return Some(crate::game::quantity::counter_count_from_map(
-                        &lki.counters,
-                        counter_type.as_ref(),
-                    ));
-                }
-            }
-            live.map(|obj| {
-                crate::game::quantity::counter_count_from_map(&obj.counters, counter_type.as_ref())
-            })
         }
         _ => None,
     }
