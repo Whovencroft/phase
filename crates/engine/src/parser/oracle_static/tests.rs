@@ -15599,7 +15599,7 @@ fn static_keyword_list_before_quoted_trigger_keeps_last_keyword() {
 #[test]
 fn static_graveyard_cards_have_retrace_during_your_turn() {
     // Six: "During your turn, nonland permanent cards in your graveyard have retrace."
-    // CR 702.80a: Retrace is a casting keyword granted to cards in a specific zone.
+    // CR 702.81a: Retrace is a casting keyword granted to cards in a specific zone.
     // Emits a Continuous static with AddKeyword so the off-zone keyword-grant
     // path sees the grant and the card becomes castable from the graveyard.
     let text = "During your turn, nonland permanent cards in your graveyard have retrace.";

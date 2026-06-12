@@ -313,7 +313,7 @@ pub(crate) fn parse_spells_have_keyword(tp: &TextPair<'_>, text: &str) -> Option
         return Some(def);
     }
     // Pattern 3: "[type] cards in/from [your zone] have [keyword]"
-    // CR 702.80a (Retrace): Grants a casting keyword to cards in a specific zone.
+    // CR 702.81a (Retrace): Grants a casting keyword to cards in a specific zone.
     // Six grants retrace to nonland permanent cards in your graveyard.
     // Emits a Continuous static with AddKeyword so the off-zone keyword-grant
     // path (`effective_off_zone_keywords`) sees the grant and the card becomes
