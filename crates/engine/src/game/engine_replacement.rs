@@ -82,7 +82,20 @@ pub(super) fn handle_replacement_choice(
         .pending_replacement
         .as_ref()
         .and_then(|pending| pending.library_placement.clone());
-    match super::replacement::continue_replacement(state, index, events) {
+    let result = super::replacement::continue_replacement(state, index, events);
+    // CR 614.12a: an optional `MayCost` accept whose payment surfaced an
+    // interactive sub-choice (e.g. Mox Diamond's "discard a land card" with
+    // multiple eligible lands) re-parked the pending replacement with
+    // `may_cost_paid: true` plus any `may_cost_remaining`, and left
+    // `waiting_for` on the live sub-choice prompt.
+    // Surface that prompt as-is; the sub-choice's resolution re-enters
+    // `continue_replacement` (resume) to finish entering the permanent once the
+    // cost is paid. The carried `Execute` payload is inert and must not be
+    // delivered here.
+    if std::mem::take(&mut state.replacement_may_cost_paused) {
+        return Ok(state.waiting_for.clone());
+    }
+    match result {
         super::replacement::ReplacementResult::Execute(event) => {
             let mut zone_change_object_id = None;
             let mut enters_battlefield = false;
@@ -1048,12 +1061,16 @@ fn apply_pending_spell_resolution(
     // replacement / triggered abilities can gate on which kickers were paid.
     if let Some(obj) = state.objects.get_mut(&ctx.object_id) {
         obj.cast_from_zone = ctx.cast_from_zone;
+        obj.cast_controller = ctx.cast_controller;
         if let Some(permission) = ctx.cast_timing_permission {
             obj.cast_timing_permission = Some((permission, state.turn_number));
         }
         obj.kickers_paid.clone_from(&ctx.kickers_paid);
         obj.additional_cost_payment_count = ctx.additional_cost_payment_count;
+        obj.additional_cost_payments
+            .clone_from(&ctx.additional_cost_payments);
         obj.convoked_creatures.clone_from(&ctx.convoked_creatures);
+        crate::database::synthesis::ensure_paid_offspring_etb_copy_triggers(obj);
     }
 
     // CR 303.4f: Aura resolving to battlefield attaches to its target.
@@ -1547,11 +1564,13 @@ mod tests {
             controller: PlayerId(0),
             casting_variant: CastingVariant::Normal,
             cast_from_zone: None,
+            cast_controller: None,
             cast_timing_permission: None,
             spell_targets: vec![],
             actual_mana_spent: 0,
             kickers_paid: vec![],
             additional_cost_payment_count: 0,
+            additional_cost_payments: vec![],
             convoked_creatures: vec![],
         });
 
@@ -1580,6 +1599,8 @@ mod tests {
             depth: 0,
             is_optional: false,
             library_placement: None,
+            may_cost_paid: false,
+            may_cost_remaining: None,
         });
         state.waiting_for = replacement_mod::replacement_choice_waiting_for(PlayerId(0), &state);
         state.priority_player = PlayerId(0);
@@ -1662,6 +1683,8 @@ mod tests {
             obj.kickers_paid = vec![KickerVariant::First];
             obj.additional_cost_payment_count = 1;
             obj.convoked_creatures = vec![ObjectId(777)];
+            obj.cast_from_zone = Some(Zone::Graveyard);
+            obj.cast_controller = Some(PlayerId(0));
             obj.cast_timing_permission =
                 Some((CastTimingPermission::AsThoughHadFlash, state.turn_number));
         }
@@ -1689,6 +1712,8 @@ mod tests {
         );
         assert_eq!(obj.additional_cost_payment_count, 1);
         assert_eq!(obj.convoked_creatures, vec![ObjectId(777)]);
+        assert_eq!(obj.cast_from_zone, Some(Zone::Graveyard));
+        assert_eq!(obj.cast_controller, Some(PlayerId(0)));
         assert_eq!(
             obj.cast_timing_permission,
             Some((CastTimingPermission::AsThoughHadFlash, state.turn_number)),
@@ -1724,6 +1749,8 @@ mod tests {
             // effect-driven battlefield entry).
             obj.kickers_paid = vec![KickerVariant::First];
             obj.additional_cost_payment_count = 2;
+            obj.cast_from_zone = Some(Zone::Graveyard);
+            obj.cast_controller = Some(PlayerId(0));
         }
 
         let mut events = Vec::new();
@@ -1743,6 +1770,8 @@ mod tests {
              `from == Stack`)"
         );
         assert_eq!(obj.additional_cost_payment_count, 0);
+        assert_eq!(obj.cast_from_zone, None);
+        assert_eq!(obj.cast_controller, None);
     }
 
     /// CR 615.1: When the player declines (or the replacement pipeline returns

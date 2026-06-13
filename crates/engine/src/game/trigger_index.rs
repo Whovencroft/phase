@@ -124,6 +124,16 @@ pub(crate) fn keys_from_trigger_def(def: &TriggerDefinition) -> (Keys, bool) {
                     push(TriggerEventKey::LeaveBattlefield(narrow));
                 }
                 (Some(Zone::Battlefield), _) => push(TriggerEventKey::LeaveBattlefield(narrow)),
+                // CR 603.6c: destination=Graveyard with unrestricted origin
+                // ("from anywhere") must match both battlefield→graveyard and
+                // non-battlefield→graveyard events. Add the battlefield fast-path
+                // keys, but keep unclassified routing for library/hand/stack
+                // origins because there is no generic "to graveyard" event key.
+                (None, Some(Zone::Graveyard)) => {
+                    push(TriggerEventKey::Dies(narrow));
+                    push(TriggerEventKey::LeaveBattlefield(narrow));
+                    return (keys, true);
+                }
                 _ => {
                     // Non-battlefield zone change (e.g. cast-from-graveyard
                     // observers). Route to unclassified — these are rare and
@@ -187,6 +197,7 @@ pub(crate) fn keys_from_trigger_def(def: &TriggerDefinition) -> (Keys, bool) {
         | TriggerMode::AttackerBlockedByCreature
         | TriggerMode::AttackerUnblocked
         | TriggerMode::AttackerUnblockedOnce
+        | TriggerMode::YouAttackUnblocked
         | TriggerMode::Blocks
         | TriggerMode::BlockersDeclared
         | TriggerMode::BecomesBlocked => {
@@ -381,14 +392,14 @@ pub(crate) fn keys_from_trigger_def(def: &TriggerDefinition) -> (Keys, bool) {
         | TriggerMode::SaddlesOrCrews
         | TriggerMode::Cycled
         | TriggerMode::CycledOrDiscarded
-        | TriggerMode::Exploited
-        | TriggerMode::Enlisted => return (keys, true),
+        | TriggerMode::Exploited => return (keys, true),
 
         // --- Triggered mechanics with dedicated event keys ---
         TriggerMode::Explored => push(TriggerEventKey::Explored),
         TriggerMode::Discover => push(TriggerEventKey::DiscoverResolved),
         TriggerMode::Adapt => push(TriggerEventKey::AdaptResolved),
         TriggerMode::Exerted => push(TriggerEventKey::Exerted),
+        TriggerMode::Enlisted => push(TriggerEventKey::Enlisted),
         TriggerMode::Foretell => push(TriggerEventKey::Foretold),
         TriggerMode::ManifestDread => push(TriggerEventKey::ManifestDreadResolved),
 
@@ -443,10 +454,8 @@ fn keys_from_event(event: &GameEvent, state: &GameState) -> Keys {
         GameEvent::TurnStarted { .. } => push(TriggerEventKey::TurnStarted),
         GameEvent::PhaseChanged { phase } => push(TriggerEventKey::BeginningOfPhase(*phase)),
         GameEvent::PriorityPassed { .. } => {}
-        // CR 701.43d: `TriggerMode::Exerted` is in the unclassified
-        // always-checked bucket (see `keys_from_trigger_def`), so no dedicated
-        // event key is needed — `match_exerted` filters by source.
         GameEvent::CreatureExerted { .. } => push(TriggerEventKey::Exerted),
+        GameEvent::CreatureEnlisted { .. } => push(TriggerEventKey::Enlisted),
         GameEvent::Foretold { .. } => push(TriggerEventKey::Foretold),
         GameEvent::SpellCast { object_id, .. } => {
             push(TriggerEventKey::SpellCast(None));
@@ -994,6 +1003,7 @@ pub fn candidates_for_event(state: &GameState, event: &GameEvent) -> SmallVec<[O
 mod tests {
     use super::*;
     use crate::types::ability::{TargetFilter, TypedFilter};
+    use crate::types::game_state::ZoneChangeRecord;
     use crate::types::triggers::TriggerEventKey;
 
     fn etb_creature_def() -> TriggerDefinition {
@@ -1081,5 +1091,47 @@ mod tests {
             &state,
         );
         assert!(event_keys.contains(&TriggerEventKey::PhaseOut));
+    }
+
+    #[test]
+    fn from_anywhere_to_graveyard_emits_battlefield_keys_and_stays_unclassified() {
+        // CR 603.6c: A trigger with destination=Graveyard and unrestricted origin
+        // ("from anywhere") should emit Dies and LeaveBattlefield keys for
+        // battlefield-origin events, but must still route through unclassified
+        // for non-battlefield origins such as library→graveyard or hand→graveyard.
+        let def = TriggerDefinition::new(TriggerMode::ChangesZone)
+            .destination(Zone::Graveyard)
+            .valid_card(TargetFilter::Typed(TypedFilter::card()));
+        let (keys, route) = keys_from_trigger_def(&def);
+        assert!(keys.contains(&TriggerEventKey::Dies(None)));
+        assert!(keys.contains(&TriggerEventKey::LeaveBattlefield(None)));
+        assert!(route);
+    }
+
+    #[test]
+    fn from_anywhere_to_graveyard_candidate_survives_library_origin_event() {
+        // CR 603.6c: "from anywhere" includes library→graveyard moves. The
+        // event side emits only Milled for this shape, so this class must stay
+        // in the unclassified safety bucket until a generic graveyard key exists.
+        let mut state = GameState::new_two_player(42);
+        let watcher = ObjectId(99);
+        let def = TriggerDefinition::new(TriggerMode::ChangesZone)
+            .destination(Zone::Graveyard)
+            .valid_card(TargetFilter::Typed(TypedFilter::card()));
+        state.trigger_index.add(watcher, &[def], false);
+
+        let event = GameEvent::ZoneChanged {
+            object_id: ObjectId(7),
+            from: Some(Zone::Library),
+            to: Zone::Graveyard,
+            record: Box::new(ZoneChangeRecord::test_minimal(
+                ObjectId(7),
+                Some(Zone::Library),
+                Zone::Graveyard,
+            )),
+        };
+
+        let candidates = candidates_for_event(&state, &event);
+        assert!(candidates.contains(&watcher));
     }
 }

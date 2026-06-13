@@ -2117,7 +2117,36 @@ pub fn parse_type_phrase_with_ctx<'a>(
         .parse(remaining)
         .is_ok()
     {
-        properties.push(FilterProp::IsChosenCreatureType);
+        // CR 205.2a: Disambiguate which "chosen type" axis this refers to by the
+        // base type, mirroring the static cost-mod path in
+        // `oracle_static/static_helpers.rs`. The default is a chosen CREATURE
+        // subtype — the overwhelmingly common case ("creature ... of the chosen
+        // type", Cavern of Souls; "token ... of the chosen type", tribal
+        // companions) where a "choose a creature type" was made. Flip to a
+        // chosen CARD type ONLY when the base is an explicit *card-type* filter
+        // ("cards of the chosen type", Winding Way's "Choose creature or land";
+        // "land of the chosen type"), where the chosen value is a card type.
+        // Emitting `IsChosenCreatureType` for a card-typed base never matches at
+        // runtime, so the filtered move would resolve to nothing.
+        let is_card_typed_base = matches!(
+            &card_type,
+            Some(
+                TypeFilter::Card
+                    | TypeFilter::Land
+                    | TypeFilter::Artifact
+                    | TypeFilter::Enchantment
+                    | TypeFilter::Instant
+                    | TypeFilter::Sorcery
+                    | TypeFilter::Planeswalker
+                    | TypeFilter::Battle
+            )
+        );
+        let chosen_prop = if is_card_typed_base {
+            FilterProp::IsChosenCardType
+        } else {
+            FilterProp::IsChosenCreatureType
+        };
+        properties.push(chosen_prop);
         pos += remaining_offset + "of the chosen type".len();
     }
 
@@ -2207,6 +2236,25 @@ pub fn parse_type_phrase_with_ctx<'a>(
     {
         exiled_by_source = true;
         pos += exiled_offset + (remaining_exiled.len() - rest.len());
+    }
+
+    // CR 608.2c + CR 122.1: "that had counters put on it this way" — relative-
+    // clause linkage to objects that received counters from the preceding
+    // instruction in the same ability (Agitator Ant: "Goad each creature that
+    // had counters put on it this way"). The resolver publishes the affected
+    // set when counters are placed; `TrackedSetFiltered` intersects it with the
+    // type filter.
+    let mut counters_put_this_way = false;
+    let remaining_counters = lower[pos..].trim_start();
+    let counters_offset = lower[pos..].len() - remaining_counters.len();
+    if let Ok((rest, _)) = alt((
+        tag::<_, _, OracleError<'_>>("that had counters put on it this way"),
+        tag::<_, _, OracleError<'_>>("that had a counter put on it this way"),
+    ))
+    .parse(remaining_counters)
+    {
+        counters_put_this_way = true;
+        pos += counters_offset + (remaining_counters.len() - rest.len());
     }
 
     // CR 608.2d: "of their choice" / "of his or her choice" — informational qualifier
@@ -2363,6 +2411,15 @@ pub fn parse_type_phrase_with_ctx<'a>(
     let filter = if exiled_by_source {
         TargetFilter::And {
             filters: vec![filter, TargetFilter::ExiledBySource],
+        }
+    } else {
+        filter
+    };
+
+    let filter = if counters_put_this_way {
+        TargetFilter::TrackedSetFiltered {
+            id: TrackedSetId(0),
+            filter: Box::new(filter),
         }
     } else {
         filter
@@ -2531,6 +2588,7 @@ fn starts_with_type_phrase_lead(text: &str) -> bool {
 fn target_filter_has_meaningful_content(filter: &TargetFilter) -> bool {
     match filter {
         TargetFilter::Typed(tf) => !tf.type_filters.is_empty() || !tf.properties.is_empty(),
+        TargetFilter::TrackedSet { .. } | TargetFilter::TrackedSetFiltered { .. } => true,
         TargetFilter::Or { filters } | TargetFilter::And { filters } => {
             filters.iter().any(target_filter_has_meaningful_content)
         }
@@ -2679,7 +2737,7 @@ fn is_adjective_prefix_prop(prop: &FilterProp) -> bool {
             // CR 702.171b: "saddled [type]" adjective prefix.
             | FilterProp::IsSaddled
             // CR 509.1h: combat-status prefixes "attacking/blocking/unblocked".
-            | FilterProp::Attacking
+            | FilterProp::Attacking { defender: None }
             | FilterProp::Blocking
             | FilterProp::Unblocked
             // CR 105.1 + CR 205.2: color / supertype adjectives.
@@ -3038,7 +3096,7 @@ pub(crate) fn parse_combat_status_prefix(text: &str) -> Option<(FilterProp, usiz
         if matches!(
             prop,
             FilterProp::Unblocked
-                | FilterProp::Attacking
+                | FilterProp::Attacking { defender: None }
                 | FilterProp::Blocking
                 | FilterProp::Tapped
                 | FilterProp::Untapped
@@ -5838,7 +5896,9 @@ mod tests {
             panic!("expected typed filter");
         };
         assert!(tf.properties.contains(&FilterProp::Another));
-        assert!(tf.properties.contains(&FilterProp::Attacking));
+        assert!(tf
+            .properties
+            .contains(&FilterProp::Attacking { defender: None }));
         assert!(tf.properties.iter().any(|p| matches!(
             p,
             FilterProp::SharesQuality {
@@ -5857,7 +5917,7 @@ mod tests {
             TargetFilter::Typed(
                 TypedFilter::creature()
                     .controller(ControllerRef::You)
-                    .properties(vec![FilterProp::Attacking])
+                    .properties(vec![FilterProp::Attacking { defender: None }])
             )
         );
         assert_eq!(rest, "");
@@ -7985,6 +8045,34 @@ mod tests {
         assert_eq!(rest, "");
     }
 
+    #[test]
+    fn parse_type_phrase_creature_that_had_counters_put_on_it_this_way() {
+        let (f, rest) = parse_type_phrase("creature that had counters put on it this way");
+        assert_eq!(rest, "", "remainder was {rest:?}");
+        assert_eq!(
+            f,
+            TargetFilter::TrackedSetFiltered {
+                id: TrackedSetId(0),
+                filter: Box::new(TargetFilter::Typed(TypedFilter::creature())),
+            }
+        );
+    }
+
+    /// Issue #2903 — Agitator Ant: goad only creatures that received counters
+    /// from the preceding instruction in the same ability.
+    #[test]
+    fn creature_that_had_counters_put_on_it_this_way_is_tracked_set_filtered() {
+        let (f, rest) = parse_target("creature that had counters put on it this way");
+        assert_eq!(rest, "");
+        assert_eq!(
+            f,
+            TargetFilter::TrackedSetFiltered {
+                id: TrackedSetId(0),
+                filter: Box::new(TargetFilter::Typed(TypedFilter::creature())),
+            }
+        );
+    }
+
     /// Issue #547 — Espers to Magicite: "choose up to one target creature card
     /// exiled this way". The bare past-participle "exiled this way" (no relative
     /// "that was/were") must still compose the `ExiledBySource` linkage onto the
@@ -9490,7 +9578,10 @@ mod tests {
         assert_eq!(result, Some((FilterProp::Unblocked, 10)));
         // Second call on remainder should get Attacking
         let result2 = parse_combat_status_prefix("attacking creatures");
-        assert_eq!(result2, Some((FilterProp::Attacking, 10)));
+        assert_eq!(
+            result2,
+            Some((FilterProp::Attacking { defender: None }, 10))
+        );
     }
 
     #[test]
@@ -9499,7 +9590,9 @@ mod tests {
         assert!(remainder.trim().is_empty(), "remainder: '{remainder}'");
         if let TargetFilter::Typed(tf) = &filter {
             assert!(tf.properties.contains(&FilterProp::Unblocked));
-            assert!(tf.properties.contains(&FilterProp::Attacking));
+            assert!(tf
+                .properties
+                .contains(&FilterProp::Attacking { defender: None }));
             assert_eq!(tf.controller, Some(ControllerRef::You));
         } else {
             panic!("Expected Typed filter, got {filter:?}");
@@ -9518,7 +9611,9 @@ mod tests {
         let second = typed_leg(&filters[1]).expect("second branch should be typed");
         assert!(first.type_filters.contains(&TypeFilter::Creature));
         assert!(second.type_filters.contains(&TypeFilter::Creature));
-        assert!(first.properties.contains(&FilterProp::Attacking));
+        assert!(first
+            .properties
+            .contains(&FilterProp::Attacking { defender: None }));
         assert!(second.properties.contains(&FilterProp::Blocking));
     }
 
@@ -9532,8 +9627,8 @@ mod tests {
         };
         assert_eq!(filters.len(), 4);
         let expected = [
-            (FilterProp::Attacking, Keyword::Flying),
-            (FilterProp::Attacking, Keyword::Vigilance),
+            (FilterProp::Attacking { defender: None }, Keyword::Flying),
+            (FilterProp::Attacking { defender: None }, Keyword::Vigilance),
             (FilterProp::Blocking, Keyword::Flying),
             (FilterProp::Blocking, Keyword::Vigilance),
         ];
@@ -11128,7 +11223,7 @@ mod tests {
                 assert!(
                     tf.properties
                         .iter()
-                        .any(|p| matches!(p, FilterProp::Attacking)),
+                        .any(|p| matches!(p, FilterProp::Attacking { defender: None })),
                     "expected Attacking property, got {:?}",
                     tf.properties
                 );

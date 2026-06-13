@@ -749,6 +749,11 @@ pub(crate) enum TargetedImperativeAst {
         /// CR 122.1 + CR 122.6: Counters placed on the returned object as it
         /// enters the battlefield.
         enter_with_counters: Vec<(CounterType, QuantityExpr)>,
+        /// CR 708.2a + CR 708.3: "face down" — the returned object is turned
+        /// face down before it enters (Yedora's "return it ... face down ... It's
+        /// a Forest land."). Lowered to a default vanilla-2/2 `face_down_profile`,
+        /// refined by a trailing "It's a <type>" `FaceDownProfileSpec`.
+        face_down: bool,
     },
     /// CR 400.6: Return to a specific non-hand, non-battlefield zone (zone change).
     ReturnToZone {
@@ -1035,6 +1040,15 @@ pub(crate) enum PutImperativeAst {
         target: TargetFilter,
         enters_under: Option<ControllerRef>,
         enter_tapped: bool,
+        /// CR 608.2c: "and the rest into <zone>" complement for a tracked-set
+        /// partition ("Put all <filter> revealed this way into your hand and
+        /// the rest into your graveyard" — Winding Way). The primary move sends
+        /// the chosen subset to `destination`; the lowering emits a sibling
+        /// `ChangeZoneAll { target: TrackedSet, destination: rest }` so the
+        /// still-tracked cards left in the producer's zone (the rest) move to
+        /// the rest zone. `None` for non-partition forms.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rest_destination: Option<Zone>,
     },
     TopOfLibrary,
     BottomOfLibrary,
@@ -1299,6 +1313,15 @@ pub(crate) enum OracleBlockAst {
         trigger_line: String,
         header: ModalHeaderAst,
         modes: Vec<ModeAst>,
+        /// CR 603.12 + CR 700.2b: When the trigger gates its modal choice behind
+        /// an optional reflexive cost ("Whenever you attack, you may sacrifice
+        /// another creature. When you do, choose ..."), this holds the cost
+        /// effect text (e.g. "Sacrifice another creature"). The lowering builds
+        /// an `Effect::Sacrifice { optional }` whose `WhenYouDo` sub_ability
+        /// carries the modal, so the modes fire only after the cost is paid.
+        /// `None` for a plain triggered modal (Pip-Boy), where the modal attaches
+        /// directly as the trigger's execute.
+        optional_cost: Option<String>,
     },
     /// CR 614.12c + CR 607.2d: "As [this permanent] enters, choose <A> or
     /// <B>. \n • <A> — <linked ability>. \n • <B> — <linked ability>." The

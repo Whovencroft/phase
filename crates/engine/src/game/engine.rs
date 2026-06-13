@@ -20,8 +20,8 @@ use crate::types::statics::StaticMode;
 use crate::types::zones::Zone;
 
 use super::ability_utils::{
-    begin_target_selection_for_ability, build_target_slots, compute_unavailable_modes,
-    has_legal_target_assignment_for_ability, modal_choice_for_player,
+    begin_target_selection_for_ability, build_target_slots, cap_distribution_target_slots,
+    compute_unavailable_modes, has_legal_target_assignment_for_ability, modal_choice_for_player,
 };
 use super::casting;
 use super::casting_costs;
@@ -2794,7 +2794,16 @@ fn apply_action(
                     let mut trial = pending.as_ref().clone();
                     trial.ability.set_chosen_x_recursive(value);
                     trial.cost.concretize_x(value);
-                    let target_slots = build_target_slots(state, &trial.ability)?;
+                    let mut target_slots = build_target_slots(state, &trial.ability)?;
+                    // CR 601.2c + CR 601.2d: clamp a divided spell's slots to the
+                    // (now-known) pool so the legal-assignment probe matches what
+                    // the controller will actually be offered (issue #2856).
+                    cap_distribution_target_slots(
+                        state,
+                        &trial.ability,
+                        trial.distribute.as_ref(),
+                        &mut target_slots,
+                    );
                     if !target_slots.is_empty()
                         && !has_legal_target_assignment_for_ability(
                             state,
@@ -3435,6 +3444,45 @@ fn apply_action(
                     attacker: *next,
                     remaining: rest.to_vec(),
                 }
+            } else if let Some(waiting_for) =
+                engine_combat::next_current_enlist_choice(state, *player)
+            {
+                waiting_for
+            } else {
+                engine_combat::finish_declare_attackers(state, &mut events, false)?
+            }
+        }
+        // CR 508.1g + CR 702.154a: the active player may tap up to one eligible
+        // creature for each Enlist instance as the source attacks. As with
+        // exert, declaration/tap/enlist triggers are deferred until all optional
+        // attack costs are decided.
+        (
+            WaitingFor::EnlistChoice {
+                player,
+                attacker,
+                eligible,
+                remaining,
+            },
+            GameAction::ChooseEnlist { target },
+        ) => {
+            triggers_processed_inline = true;
+            if state.priority_player
+                != turn_control::authorized_submitter_for_player(state, *player)
+            {
+                return Err(EngineError::NotYourPriority);
+            }
+            if let Some(target) = target {
+                if !eligible.contains(&target) {
+                    return Err(EngineError::InvalidAction(format!(
+                        "{target:?} is not an eligible Enlist target"
+                    )));
+                }
+                engine_combat::apply_attack_enlist(state, *attacker, target, &mut events)?;
+            }
+            if let Some(waiting_for) =
+                engine_combat::next_enlist_choice(state, *player, remaining.clone())
+            {
+                waiting_for
             } else {
                 engine_combat::finish_declare_attackers(state, &mut events, false)?
             }
@@ -6969,9 +7017,10 @@ mod tests {
                         produced: ManaProduction::Colorless {
                             count: QuantityExpr::Fixed { value: 2 },
                         },
-                        restrictions: vec![ManaSpendRestriction::SpellTypeOrAbilityActivation(
-                            "Colorless Eldrazi".to_string(),
-                        )],
+                        restrictions: vec![ManaSpendRestriction::SpellTypeOrAbilityActivation {
+                            spell_type: "Colorless Eldrazi".to_string(),
+                            ability: crate::types::mana::AbilityActivationScope::OfSpellType,
+                        }],
                         grants: vec![],
                         expiry: None,
                         target: None,
@@ -7057,9 +7106,10 @@ mod tests {
                         produced: ManaProduction::Colorless {
                             count: QuantityExpr::Fixed { value: 2 },
                         },
-                        restrictions: vec![ManaSpendRestriction::SpellTypeOrAbilityActivation(
-                            "Colorless Eldrazi".to_string(),
-                        )],
+                        restrictions: vec![ManaSpendRestriction::SpellTypeOrAbilityActivation {
+                            spell_type: "Colorless Eldrazi".to_string(),
+                            ability: crate::types::mana::AbilityActivationScope::OfSpellType,
+                        }],
                         grants: vec![],
                         expiry: None,
                         target: None,
@@ -11589,6 +11639,8 @@ mod tests {
             distribute: None,
             origin_zone: crate::types::zones::Zone::Hand,
             additional_cost_flow: None,
+            deferred_required_additional_cost: None,
+            additional_cost_queue: Vec::new(),
             additional_cost_source: crate::types::game_state::SpellCostSource::Other,
             deferred_modal_choice: None,
             deferred_target_selection: false,
@@ -11972,6 +12024,8 @@ mod tests {
             distribute: None,
             origin_zone: crate::types::zones::Zone::Hand,
             additional_cost_flow: None,
+            deferred_required_additional_cost: None,
+            additional_cost_queue: Vec::new(),
             additional_cost_source: crate::types::game_state::SpellCostSource::Other,
             deferred_modal_choice: None,
             deferred_target_selection: false,
@@ -17763,6 +17817,7 @@ Echo—Discard a card. (At the beginning of your upkeep, if this came under your
             enters_attacking: false,
             owner_library: false,
             track_exiled_by_source: false,
+            face_down_profile: None,
             count_param: 0,
         };
         state.pending_continuation = Some(crate::types::game_state::PendingContinuation::new(
@@ -17831,6 +17886,7 @@ Echo—Discard a card. (At the beginning of your upkeep, if this came under your
             enters_attacking: false,
             owner_library: false,
             track_exiled_by_source: false,
+            face_down_profile: None,
             count_param: 0,
         };
 
@@ -17875,6 +17931,7 @@ Echo—Discard a card. (At the beginning of your upkeep, if this came under your
             enters_attacking: false,
             owner_library: false,
             track_exiled_by_source: false,
+            face_down_profile: None,
             count_param: 0,
         };
 

@@ -1016,6 +1016,17 @@ pub fn can_activate_mana_ability_now(
     {
         return false;
     }
+    can_activate_mana_ability_by_simulation(state, player, source_id, ability_index, ability_def)
+}
+
+fn can_activate_mana_ability_by_simulation(
+    state: &GameState,
+    player: PlayerId,
+    source_id: ObjectId,
+    ability_index: usize,
+    ability_def: &AbilityDefinition,
+) -> bool {
+    crate::game::perf_counters::record_state_clone_for_legality();
     let mut simulated = state.clone();
     activate_mana_ability(
         &mut simulated,
@@ -3145,9 +3156,10 @@ mod tests {
                         ManaColor::Green,
                     ],
                 },
-                restrictions: vec![ManaSpendRestriction::SpellTypeOrAbilityActivation(
-                    "Elemental".to_string(),
-                )],
+                restrictions: vec![ManaSpendRestriction::SpellTypeOrAbilityActivation {
+                    spell_type: "Elemental".to_string(),
+                    ability: crate::types::mana::AbilityActivationScope::OfSpellType,
+                }],
                 grants: vec![],
                 expiry: None,
                 target: None,
@@ -3164,9 +3176,10 @@ mod tests {
             assert_eq!(
                 unit.restrictions,
                 vec![
-                    crate::types::mana::ManaRestriction::OnlyForTypeSpellsOrAbilities(
-                        "Elemental".to_string()
-                    )
+                    crate::types::mana::ManaRestriction::OnlyForTypeSpellsOrAbilities {
+                        spell_type: "Elemental".to_string(),
+                        ability: crate::types::mana::AbilityActivationScope::OfSpellType,
+                    }
                 ],
                 "Flamebraider mana must carry Elemental restriction"
             );
