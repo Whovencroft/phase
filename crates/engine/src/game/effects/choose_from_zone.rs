@@ -101,27 +101,38 @@ fn resolve_candidate_cards(
     zone_owner: ZoneOwner,
     filter: Option<&TargetFilter>,
 ) -> Result<Vec<ObjectId>, EffectError> {
-    if let Some(cards) = chain_tracked_set_cards(state) {
-        return Ok(cards);
+    // CR 701.38: When the ability has `scoped_player` set (per-ballot voter-
+    // identity path), skip chain-tracked-set candidates — each ballot must
+    // independently scan the zone for permanents owned by its voter, not reuse
+    // a tracked set published by a prior ballot's choice.
+    if ability.scoped_player.is_none() {
+        if let Some(cards) = chain_tracked_set_cards(state) {
+            return Ok(cards);
+        }
     }
 
-    let cards = crate::game::targeting::latest_tracked_set_id(state)
-        .and_then(|id| state.tracked_object_sets.get(&id).cloned())
-        .unwrap_or_else(|| {
-            ability
-                .targets
-                .iter()
-                .filter_map(|t| match t {
-                    TargetRef::Object(id) => Some(*id),
-                    _ => None,
-                })
-                .collect()
-        });
-
-    let cards = if cards.is_empty() {
+        // CR 701.38: For scoped_player abilities (per-ballot voter-identity),
+    // skip tracked-set and target fallbacks — go directly to zone scan.
+    let cards = if ability.scoped_player.is_some() && zone == Zone::Battlefield {
         collect_direct_zone_cards(state, ability, zone, additional_zones, zone_owner, filter)?
     } else {
-        cards
+        let cards = crate::game::targeting::latest_tracked_set_id(state)
+            .and_then(|id| state.tracked_object_sets.get(&id).cloned())
+            .unwrap_or_else(|| {
+                ability
+                    .targets
+                    .iter()
+                    .filter_map(|t| match t {
+                        TargetRef::Object(id) => Some(*id),
+                        _ => None,
+                    })
+                    .collect()
+            });
+        if cards.is_empty() {
+            collect_direct_zone_cards(state, ability, zone, additional_zones, zone_owner, filter)?
+        } else {
+            cards
+        }
     };
 
     Ok(cards)
@@ -141,12 +152,48 @@ fn collect_direct_zone_cards(
     zone_owner: ZoneOwner,
     filter: Option<&TargetFilter>,
 ) -> Result<Vec<ObjectId>, EffectError> {
-    let owner = resolve_zone_owner(state, ability, zone_owner)?;
     let filter_ctx = FilterContext::from_ability(ability);
+
+    // CR 701.38 + CR 108.3: When the ability has `scoped_player` set and the
+    // zone is Battlefield, the filter contains `Owned { ScopedPlayer }` which
+    // checks ownership (not control). Scan ALL battlefield permanents so the
+    // ownership filter can match regardless of who controls them. This supports
+    // Expropriate's "choose a permanent owned by the voter" per-ballot path.
+    if ability.scoped_player.is_some() && zone == Zone::Battlefield {
+        let mut all_zones = Vec::with_capacity(1 + additional_zones.len());
+        all_zones.push(zone);
+        all_zones.extend_from_slice(additional_zones);
+        return Ok(all_zones
+            .into_iter()
+            .flat_map(|z| match z {
+                Zone::Battlefield => state
+                    .battlefield
+                    .iter()
+                    .copied()
+                    .filter(|id| {
+                        state
+                            .objects
+                            .get(id)
+                            .is_some_and(|obj| obj.is_phased_in())
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    let owner = resolve_zone_owner(state, ability, zone_owner)
+                        .unwrap_or(ability.controller);
+                    object_ids_in_player_zone(state, owner, other)
+                }
+            })
+            .filter(|id| {
+                filter
+                    .is_none_or(|filter| matches_target_filter(state, *id, filter, &filter_ctx))
+            })
+            .collect());
+    }
+
+    let owner = resolve_zone_owner(state, ability, zone_owner)?;
     let mut zones = Vec::with_capacity(1 + additional_zones.len());
     zones.push(zone);
     zones.extend_from_slice(additional_zones);
-
     Ok(zones
         .into_iter()
         .flat_map(|zone| object_ids_in_player_zone(state, owner, zone))

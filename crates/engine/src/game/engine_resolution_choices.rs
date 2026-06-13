@@ -1184,9 +1184,20 @@ pub(super) fn handle_resolution_choice(
                     &new_ballots,
                     events,
                 );
-                ResolutionChoiceOutcome::WaitingFor(finish_with_continuation(
-                    state, controller, events,
-                ))
+                // CR 701.38 + CR 608.2c: If resolve_tally already parked
+                // on an interactive choice (per-ballot voter-identity path,
+                // e.g. Expropriate), return that WaitingFor directly without
+                // overwriting it with Priority.
+                if matches!(
+                    state.waiting_for,
+                    WaitingFor::ChooseFromZoneChoice { .. }
+                ) {
+                    ResolutionChoiceOutcome::WaitingFor(state.waiting_for.clone())
+                } else {
+                    ResolutionChoiceOutcome::WaitingFor(finish_with_continuation(
+                        state, controller, events,
+                    ))
+                }
             }
         }
         // CR 700.3 + CR 700.3a + CR 101.4: Subject submits their partition;
@@ -2031,6 +2042,7 @@ pub(super) fn handle_resolution_choice(
                 let is_partition = !matches!(
                     cont.chain.effect,
                     crate::types::ability::Effect::PutCounter { .. }
+                        | crate::types::ability::Effect::GainControl { .. }
                 );
                 if is_partition {
                     if let Some(ref mut next_sub) = cont.chain.sub_ability {

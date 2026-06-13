@@ -27,9 +27,11 @@ use nom::combinator::{map, success, value};
 use nom::Parser;
 
 use crate::types::ability::{
-    AbilityDefinition, AbilityKind, ControllerRef, Effect, PlayerFilter, QuantityExpr, QuantityRef,
-    VoterScope,
+    AbilityDefinition, AbilityKind, Chooser, ControllerRef, Effect, FilterProp, PlayerFilter,
+    QuantityExpr, QuantityRef, SubAbilityLink, TargetFilter, TypeFilter, TypedFilter, VoterScope,
+    ZoneOwner,
 };
+use crate::types::zones::Zone;
 
 use super::oracle_effect::parse_effect_chain_with_context;
 use super::oracle_ir::context::ParseContext;
@@ -96,8 +98,17 @@ pub(crate) fn parse_vote_block(text: &str, kind: AbilityKind) -> Option<AbilityD
             parse_for_each_vote_clause(walk, &choices)
         {
             let idx = choices.iter().position(|c| c == &choice)?;
-            let parsed =
-                parse_effect_chain_with_context(effect_text, kind, &mut ParseContext::default());
+            // CR 701.38 + CR 608.2c: Try the vote-specific "choose a permanent
+            // owned by the voter and gain control of it" pattern before the
+            // general-purpose chain parser (which cannot resolve "the voter").
+            let parsed = try_parse_voter_owned_permanent(effect_text, kind)
+                .unwrap_or_else(|| {
+                    parse_effect_chain_with_context(
+                        effect_text,
+                        kind,
+                        &mut ParseContext::default(),
+                    )
+                });
             (rest, idx, parsed, who_chose)
         } else {
             // CR 701.38 + CR 122.1 + CR 608.2c: aggregate-tally shape (Emissary
@@ -544,6 +555,126 @@ fn split_choices(input: &str) -> Option<Vec<String>> {
         return None;
     }
     Some(choices)
+}
+
+/// CR 701.38 + CR 608.2c: Detect the Expropriate-family "choose a permanent
+/// owned by the voter and gain control of it" per-ballot clause. The general
+/// parser cannot resolve "the voter" — it is a vote-specific pronoun meaning
+/// "the player who cast this ballot". At runtime, `resolve_tally` binds
+/// `scoped_player` to the ballot's voter, so the filter uses
+/// `ControllerRef::ScopedPlayer` for the ownership check.
+///
+/// Returns `Some(AbilityDefinition)` with:
+///   * effect: `ChooseFromZone { zone: Battlefield, filter: permanent + Owned { ScopedPlayer } }`
+///   * sub_ability: `GainControl { target: Any }`
+///
+/// The `ChooseFromZone` chooser is `Controller` (the spell controller picks),
+/// and `zone_owner` is `Controller` — the candidate pool is the full
+/// battlefield filtered by the ownership property, not a single player's zone.
+fn try_parse_voter_owned_permanent(effect_text: &str, kind: AbilityKind) -> Option<AbilityDefinition> {
+    // Nom-combinator match: "choose a permanent owned by the voter and gain
+    // control of it" (case-insensitive, optional trailing period).
+    let lower = effect_text.to_lowercase();
+    let lower = lower.trim();
+    let lower = lower.strip_suffix('.').unwrap_or(lower);
+    let res: nom::IResult<&str, (), OracleError<'_>> = value(
+        (),
+        tag::<_, _, OracleError<'_>>("choose a permanent owned by the voter and gain control of it"),
+    )
+    .parse(lower);
+    res.ok()?;
+
+    // Build the ChooseFromZone effect with Owned { ScopedPlayer } filter.
+    let filter = TargetFilter::Typed(TypedFilter {
+        type_filters: vec![TypeFilter::Permanent],
+        controller: None,
+        properties: vec![FilterProp::Owned {
+            controller: ControllerRef::ScopedPlayer,
+        }],
+    });
+    let gain_control_sub = AbilityDefinition {
+        kind,
+        effect: Box::new(Effect::GainControl {
+            target: TargetFilter::Any,
+        }),
+        cost: None,
+        sub_ability: None,
+        else_ability: None,
+        duration: None,
+        description: None,
+        target_prompt: None,
+        target_chooser: None,
+        activation_restrictions: Vec::new(),
+        activation_zone: None,
+        ability_tag: None,
+        condition: None,
+        optional_targeting: false,
+        optional: false,
+        optional_for: None,
+        multi_target: None,
+        target_constraints: Vec::new(),
+        target_choice_timing: crate::types::ability::TargetChoiceTiming::Resolution,
+        distribute: None,
+        unless_pay: None,
+        modal: None,
+        mode_abilities: Vec::new(),
+        repeat_for: None,
+        repeat_until: None,
+        min_x_value: 0,
+        cant_be_copied: false,
+        cost_reduction: None,
+        forward_result: false,
+        player_scope: None,
+        starting_with: None,
+        target_selection_mode: crate::types::ability::TargetSelectionMode::default(),
+        sub_link: SubAbilityLink::ContinuationStep,
+        iteration_kind_binding: None,
+    };
+    Some(AbilityDefinition {
+        kind,
+        effect: Box::new(Effect::ChooseFromZone {
+            count: 1,
+            zone: Zone::Battlefield,
+            additional_zones: Vec::new(),
+            zone_owner: ZoneOwner::Controller,
+            filter: Some(filter),
+            chooser: Chooser::Controller,
+            up_to: false,
+            constraint: None,
+        }),
+        cost: None,
+        sub_ability: Some(Box::new(gain_control_sub)),
+        else_ability: None,
+        duration: None,
+        description: None,
+        target_prompt: None,
+        target_chooser: None,
+        activation_restrictions: Vec::new(),
+        activation_zone: None,
+        ability_tag: None,
+        condition: None,
+        optional_targeting: false,
+        optional: false,
+        optional_for: None,
+        multi_target: None,
+        target_constraints: Vec::new(),
+        target_choice_timing: crate::types::ability::TargetChoiceTiming::Resolution,
+        distribute: None,
+        unless_pay: None,
+        modal: None,
+        mode_abilities: Vec::new(),
+        repeat_for: None,
+        repeat_until: None,
+        min_x_value: 0,
+        cant_be_copied: false,
+        cost_reduction: None,
+        forward_result: false,
+        player_scope: None,
+        starting_with: None,
+        target_selection_mode: crate::types::ability::TargetSelectionMode::default(),
+        sub_link: SubAbilityLink::ContinuationStep,
+        iteration_kind_binding: None,
+    })
 }
 
 #[cfg(test)]

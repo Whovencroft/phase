@@ -64,6 +64,7 @@ mod engine_invariants;
 mod enlightened_tutor_regression;
 mod evelyn_regression;
 mod exhibition_tidecaller_target_player_mill;
+mod expropriate_money_vote;
 mod export_runtime_canaries;
 mod exquisite_blood_routing;
 mod flickerwisp_delayed_return;
