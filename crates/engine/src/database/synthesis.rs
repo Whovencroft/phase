@@ -14963,8 +14963,11 @@ mod annihilator_runtime_tests {
 mod myriad_runtime_tests {
     use super::*;
     use crate::game::combat::AttackTarget;
+    use crate::game::effects::become_copy;
+    use crate::game::layers::evaluate_layers;
     use crate::game::printed_cards::apply_card_face_to_object;
     use crate::game::zones::create_object;
+    use crate::types::ability::{ResolvedAbility, TargetRef};
     use crate::types::actions::GameAction;
     use crate::types::card_type::CoreType;
     use crate::types::events::GameEvent;
@@ -15274,14 +15277,6 @@ mod myriad_runtime_tests {
     /// plus the granted Myriad trigger.
     #[test]
     fn myriad_on_copy_creature_creates_token_without_stall() {
-        use crate::game::effects::become_copy;
-        use crate::game::layers::evaluate_layers;
-        use crate::types::ability::{
-            ContinuousModification, Duration, Effect, ResolvedAbility, TargetFilter, TargetRef,
-        };
-        use crate::types::keywords::Keyword;
-        use crate::types::triggers::TriggerMode;
-
         // 3-player game so Myriad creates a token for the non-defending opponent.
         let face = myriad_creature_face("Face-Breaker Analog", 0); // no keywords yet
         let (mut state, target_id) = setup_attack_state(3, &face);
