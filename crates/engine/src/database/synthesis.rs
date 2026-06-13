@@ -15004,6 +15004,7 @@ mod myriad_runtime_tests {
     use super::*;
     use crate::game::combat::AttackTarget;
     use crate::game::effects::become_copy;
+    use crate::game::keywords;
     use crate::game::layers::evaluate_layers;
     use crate::game::printed_cards::apply_card_face_to_object;
     use crate::game::zones::create_object;
@@ -15374,7 +15375,7 @@ mod myriad_runtime_tests {
         // Verify Muddle now has the Myriad keyword and trigger.
         let muddle_obj = state.objects.get(&muddle_id).unwrap();
         assert!(
-            muddle_obj.keywords.contains(&Keyword::Myriad),
+            keywords::has_keyword(muddle_obj, &Keyword::Myriad),
             "Muddle should have Myriad keyword after becoming a copy"
         );
         let has_myriad_trigger = muddle_obj.trigger_definitions.iter_all().any(|trigger| {
