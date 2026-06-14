@@ -17947,7 +17947,7 @@ fn try_parse_put_zone_change_parts(
                 // CR 401.4: "in a random order" in the post-destination text
                 // means the objects are placed randomly; otherwise the owner
                 // chooses the order.
-                let random_order = after.lower.contains("in a random order");
+                let random_order = scan_contains_phrase(after.lower, "in a random order");
                 return Some((
                     Effect::ChangeZoneAll {
                         origin,
