@@ -503,6 +503,12 @@ pub(crate) fn drain_pending_continuation(state: &mut GameState, events: &mut Vec
     if !waits_for_resolution_choice(&state.waiting_for) {
         drain_pending_change_zone_iteration(state, events);
     }
+    // CR 701.38d: Resume per-ballot vote iteration after an interactive
+    // choice resolves. Must run after change_zone_iteration (which may be
+    // nested inside a ballot body) and before repeat_iteration.
+    if !waits_for_resolution_choice(&state.waiting_for) {
+        vote::drain_pending_vote_ballot_iteration(state, events);
+    }
     // CR 609.3 + CR 109.5: After the per-iteration chain drains, drive any
     // remaining `repeat_for` iterations. Each resumed iteration may itself
     // pause and re-stash via the loop in `resolve_ability_chain`, producing a
@@ -1096,6 +1102,38 @@ fn is_public_zone(zone: crate::types::zones::Zone) -> bool {
     )
 }
 
+/// CR 603.12 + CR 601.2c: Freeze the reflexive event count into the pending
+/// trigger's `subject_match_count` at the moment the "When you do" sub-ability
+/// fires. The reflexive ability's "up to that many target ..." bound is an
+/// `EventContextAmount` that resolves against the count of subjects affected by
+/// the triggering action (e.g. the number of Treasures sacrificed). At
+/// creation time `last_effect_count` (and the rest of the event-context
+/// cascade) is still live, so resolving `EventContextAmount` here captures the
+/// real count. The reflexive triggered ability resolves later in a fresh
+/// `apply()` where that scratch state has been cleared; `subject_match_count`
+/// is rehydrated into `current_trigger_match_count` (CR 603.2c) and resolves
+/// the number of targets at target-assign time. Without this freeze the bound
+/// collapses to 0 — yielding "Unused selected target slots" or a silently
+/// wrong amount. Resolves via the single authoritative `resolve_quantity`
+/// cascade (`QuantityRef::EventContextAmount`) — never re-counts. `None` when
+/// the live count resolves to 0 (no event context), matching the prior
+/// behavior for reflexive abilities with no event-count bound.
+fn freeze_reflexive_event_count(
+    state: &GameState,
+    controller: PlayerId,
+    source_id: ObjectId,
+) -> Option<u32> {
+    let count = crate::game::quantity::resolve_quantity(
+        state,
+        &QuantityExpr::Ref {
+            qty: QuantityRef::EventContextAmount,
+        },
+        controller,
+        source_id,
+    );
+    u32::try_from(count).ok().filter(|&c| c > 0)
+}
+
 /// CR 603.12: Begin reflexive target selection for a `WhenYouDo` /
 /// `QuantityCheck` ability whose targets were deferred to resolution time.
 /// Returns `true` when `WaitingFor::TriggerTargetSelection` (or inline random
@@ -1145,7 +1183,10 @@ fn try_begin_reflexive_target_selection(
             mode_abilities: reflexive.mode_abilities.clone(),
             description: trigger_description,
             may_trigger_origin: None,
-            subject_match_count: None,
+            // CR 603.12 + CR 601.2c: freeze the live event count (e.g. number
+            // sacrificed) so an "up to that many target ..." bound survives
+            // into the later fresh-`apply()` target-assign.
+            subject_match_count: freeze_reflexive_event_count(state, controller, source_id),
             die_result: state.die_result_this_resolution,
         };
         let trigger_events =
@@ -1235,7 +1276,12 @@ fn try_begin_reflexive_target_selection(
         mode_abilities: vec![],
         description: trigger_description.clone(),
         may_trigger_origin: None,
-        subject_match_count: None,
+        // CR 603.12 + CR 601.2c: freeze the live event count (e.g. number of
+        // subjects sacrificed) so an "up to that many target ..." bound — an
+        // `EventContextAmount` resolved against the firing action — survives
+        // into the later fresh-`apply()` target-assign instead of collapsing
+        // to 0.
+        subject_match_count: freeze_reflexive_event_count(state, controller, source_id),
         // CR 706.2 + CR 603.12: capture the live die-roll result from the
         // creating ability so the reflexive entry can re-stamp it when it
         // resolves as its own stack object.

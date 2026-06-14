@@ -52,6 +52,11 @@ pub enum ZoneOwner {
     TargetedPlayer,
     /// An opponent of the controller owns the referenced zone.
     Opponent,
+    /// CR 701.38d: The scoped player (voter) owns the referenced zone.
+    /// Used by per-ballot vote iteration (Expropriate) where the candidate
+    /// pool is "permanents owned by the voter". For Battlefield, filters
+    /// by `obj.owner` (ownership) rather than `obj.controller` (control).
+    ScopedPlayer,
 }
 
 /// CR 101.4: Who selects permanents in a multi-player category choice effect
@@ -107,6 +112,16 @@ pub enum SearchSelectionConstraint {
     /// card"). The chosen set must be assignable to the printed descriptions,
     /// with each physical card used for at most one description slot.
     MatchEachFilter { filters: Vec<TargetFilter> },
+}
+
+impl SearchSelectionConstraint {
+    /// CR 701.23b vs CR 701.23d: a *stated-quality* search (any constrained
+    /// variant) may find fewer cards than requested — including none. A pure
+    /// *quantity* search (`None`) must find as many as possible. Drives the
+    /// SearchChoice lower bound in the submission guard and AI candidate gen.
+    pub fn permits_partial_find(&self) -> bool {
+        !matches!(self, SearchSelectionConstraint::None)
+    }
 }
 
 /// CR 400.11 + CR 406.3: Candidate pool for outside-game searches. The
