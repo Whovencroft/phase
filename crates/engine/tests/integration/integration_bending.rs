@@ -2259,6 +2259,7 @@ fn earthbended_land_returns_tapped_after_exile() {
             enter_with_counters: vec![],
             face_down_profile: None,
             library_position: None,
+            random_order: false,
         },
         vec![TargetRef::Object(land_id)],
         exile_source,
