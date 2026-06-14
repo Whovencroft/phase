@@ -4089,7 +4089,6 @@ pub(super) fn lower_put_ast(ast: PutImperativeAst) -> Effect {
                     up_to,
                     enter_with_counters,
                     face_down_profile: None,
-                    library_position: None,
                 }
             }
         }
@@ -7896,7 +7895,6 @@ pub(super) fn lower_zone_counter_ast(ast: ZoneCounterImperativeAst) -> Effect {
                     up_to: false,
                     enter_with_counters,
                     face_down_profile: None,
-                    library_position: None,
                 }
             }
         }

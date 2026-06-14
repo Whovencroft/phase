@@ -765,7 +765,7 @@ pub(crate) fn process_one_zone_move(
         &ctx.enter_with_counters,
         ctx.face_down_profile.as_ref(),
         ctx.track_exiled_by_source,
-        ctx.library_placement,
+        ctx.library_placement.clone(),
         events,
     );
 
@@ -793,9 +793,14 @@ pub fn resolve_all(
     // `InAnyZone`, scan their union; otherwise fall back to the explicit `origin`
     // (or `Battlefield`). Single-zone filters (`InZone` alone) preserve legacy
     // behavior — only the multi-zone shape opts into the union scan.
-    let (origin_zones, dest_zone, target_filter, enter_tapped, enter_with_counters, effect_library_position) = match &ability
-        .effect
-    {
+    let (
+        origin_zones,
+        dest_zone,
+        target_filter,
+        enter_tapped,
+        enter_with_counters,
+        effect_library_position,
+    ) = match &ability.effect {
         Effect::ChangeZoneAll {
             origin,
             destination,
@@ -2082,7 +2087,6 @@ mod tests {
                 up_to: false,
                 enter_with_counters: vec![],
                 face_down_profile: None,
-                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -2971,6 +2975,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![TargetRef::Player(PlayerId(1))],
             ObjectId(100),
@@ -3373,7 +3378,6 @@ mod tests {
                 up_to: false,
                 enter_with_counters: vec![],
                 face_down_profile: None,
-                library_position: None,
             },
             vec![TargetRef::Object(obj_id)],
             source_id,
@@ -3429,7 +3433,6 @@ mod tests {
                 up_to: false,
                 enter_with_counters: vec![],
                 face_down_profile: None,
-                library_position: None,
             },
             vec![TargetRef::Object(obj_id)],
             source_id,
@@ -3481,7 +3484,6 @@ mod tests {
                 up_to: false,
                 enter_with_counters: vec![],
                 face_down_profile: None,
-                library_position: None,
             },
             vec![],
             obj_id,
@@ -3539,7 +3541,6 @@ mod tests {
                 up_to: true,
                 enter_with_counters: vec![],
                 face_down_profile: None,
-                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -3686,6 +3687,7 @@ mod tests {
                     enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     enter_with_counters: vec![],
                     face_down_profile: None,
+                    library_position: None,
                 },
                 vec![],
                 ObjectId(200),

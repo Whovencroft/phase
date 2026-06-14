@@ -2421,7 +2421,6 @@ pub(super) fn apply_clause_continuation(
                     }
                     | Effect::ChangeZone {
                         face_down_profile: fdp @ Some(_),
-                        library_position: None,
                         ..
                     } => {
                         *fdp = Some(profile);

@@ -1926,7 +1926,6 @@ fn try_parse_airbend_clause(tp: TextPair<'_>) -> Option<ParsedEffectClause> {
             up_to: false,
             enter_with_counters: vec![],
             face_down_profile: None,
-            library_position: None,
         }
     };
 

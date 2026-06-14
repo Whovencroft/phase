@@ -1190,7 +1190,6 @@ mod tests {
             GameAction::Debug(DebugAction::MoveToZone {
                 object_id: staged,
                 to_zone: Zone::Battlefield,
-                library_position: None,
                 simulate: false,
             }),
         )

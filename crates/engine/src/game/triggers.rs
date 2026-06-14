@@ -18587,7 +18587,6 @@ pub mod tests {
             owner_library: false,
             track_exiled_by_source: false,
             face_down_profile: None,
-            library_position: None,
             count_param: 0,
         };
 
