@@ -1912,6 +1912,7 @@ fn try_parse_airbend_clause(tp: TextPair<'_>) -> Option<ParsedEffectClause> {
             enter_with_counters: vec![],
             face_down_profile: None,
             library_position: None,
+            random_order: false,
         }
     } else {
         Effect::ChangeZone {
@@ -15088,6 +15089,7 @@ fn try_parse_return_target_and_same_name_from_your_graveyard(
             enter_with_counters: vec![],
             face_down_profile: None,
             library_position: None,
+            random_order: false,
         },
     )));
     Some(def)
@@ -17942,6 +17944,10 @@ fn try_parse_put_zone_change_parts(
                 } else {
                     None
                 };
+                // CR 401.4: "in a random order" in the post-destination text
+                // means the objects are placed randomly; otherwise the owner
+                // chooses the order.
+                let random_order = after.lower.contains("in a random order");
                 return Some((
                     Effect::ChangeZoneAll {
                         origin,
@@ -17954,6 +17960,7 @@ fn try_parse_put_zone_change_parts(
                         enter_with_counters: vec![],
                         face_down_profile: None,
                         library_position,
+                        random_order,
                     },
                     choice_count,
                 ));
@@ -22782,6 +22789,7 @@ mod tests {
                     enter_with_counters: _,
                     face_down_profile: None,
                     library_position: None,
+                    random_order: false,
                 }
             ),
             "exile target player's graveyard should be ChangeZoneAll with origin=Graveyard, target=Player, got {e:?}"
@@ -22846,6 +22854,7 @@ mod tests {
                     enter_with_counters: _,
                     face_down_profile: None,
                     library_position: None,
+                    random_order: false,
                 }
             ),
             "should produce ChangeZoneAll from Exile to Graveyard with ExiledBySource, got {e:?}"
@@ -25540,6 +25549,7 @@ mod tests {
                 enter_with_counters: _,
                 face_down_profile: None,
                 library_position: None,
+                random_order: false,
             }
         ));
 
@@ -25558,6 +25568,7 @@ mod tests {
                 enter_with_counters: _,
                 face_down_profile: None,
                 library_position: None,
+                random_order: false,
             }
         ));
 
@@ -44631,6 +44642,7 @@ mod tests {
                 origin,
                 destination,
                 library_position,
+                random_order,
                 ..
             } => {
                 assert_eq!(origin, Some(Zone::Graveyard));
@@ -44639,6 +44651,10 @@ mod tests {
                     library_position,
                     Some(LibraryPosition::Bottom),
                     "library_position must be Some(Bottom) to suppress auto-shuffle"
+                );
+                assert!(
+                    random_order,
+                    "random_order must be true for 'in a random order' text"
                 );
             }
             other => panic!("expected ChangeZoneAll, got {other:?}"),
@@ -46944,6 +46960,7 @@ mod snapshot_tests {
             enter_with_counters: _,
             face_down_profile: None,
             library_position: None,
+            random_order: false,
         } = &*same_name.effect
         else {
             panic!("expected ChangeZoneAll tail, got {:?}", same_name.effect);

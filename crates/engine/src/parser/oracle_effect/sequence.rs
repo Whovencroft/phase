@@ -2359,6 +2359,7 @@ pub(super) fn apply_clause_continuation(
                                 enter_with_counters: vec![],
                                 face_down_profile,
                                 library_position: None,
+                                random_order: false,
                             },
                         ));
                     }
@@ -2417,6 +2418,7 @@ pub(super) fn apply_clause_continuation(
                     Effect::ChangeZoneAll {
                         face_down_profile: fdp @ Some(_),
                         library_position: None,
+                        random_order: false,
                         ..
                     }
                     | Effect::ChangeZone {

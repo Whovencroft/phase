@@ -1751,6 +1751,7 @@ pub(super) fn lower_targeted_action_ast(ast: TargetedImperativeAst) -> Effect {
                 enter_with_counters,
                 face_down_profile: None,
                 library_position: None,
+                random_order: false,
             }
         }
         TargetedImperativeAst::Fight { target } => Effect::Fight {
@@ -2351,6 +2352,7 @@ pub(super) fn lower_search_and_creation_ast(ast: SearchCreationImperativeAst) ->
             enter_with_counters: vec![],
             face_down_profile: None,
             library_position: None,
+            random_order: false,
         },
     }
 }
@@ -4129,6 +4131,7 @@ pub(super) fn lower_put_ast(ast: PutImperativeAst) -> Effect {
             enter_with_counters: vec![],
             face_down_profile: None,
             library_position: None,
+            random_order: false,
         },
         PutImperativeAst::ZoneChange {
             origin,
@@ -4162,6 +4165,7 @@ pub(super) fn lower_put_ast(ast: PutImperativeAst) -> Effect {
                     enter_with_counters: vec![],
                     face_down_profile: None,
                     library_position: None,
+                    random_order: false,
                 }
             } else {
                 Effect::ChangeZone {
@@ -4938,6 +4942,7 @@ fn change_zone_all_to_library_effect(origin: Zone) -> Effect {
         enter_with_counters: vec![],
         face_down_profile: None,
         library_position: None,
+        random_order: false,
     }
 }
 
@@ -7378,6 +7383,7 @@ pub(super) fn lower_imperative_family_ast(ast: ImperativeFamilyAst) -> ParsedEff
                 enter_with_counters: vec![],
                 face_down_profile: None,
                 library_position: None,
+                random_order: false,
             };
             let complement = Effect::ChangeZoneAll {
                 origin: None,
@@ -7388,6 +7394,7 @@ pub(super) fn lower_imperative_family_ast(ast: ImperativeFamilyAst) -> ParsedEff
                 enter_with_counters: vec![],
                 face_down_profile: None,
                 library_position: None,
+                random_order: false,
             };
             let mut clause = parsed_clause(primary);
             clause.sub_ability = Some(Box::new(AbilityDefinition::new(
@@ -7970,6 +7977,7 @@ pub(super) fn lower_zone_counter_ast(ast: ZoneCounterImperativeAst) -> Effect {
                     enter_with_counters: vec![],
                     face_down_profile: None,
                     library_position: None,
+                    random_order: false,
                 }
             } else {
                 Effect::ChangeZone {
@@ -9698,6 +9706,7 @@ mod tests {
                 enter_with_counters: _,
                 face_down_profile: None,
                 library_position: None,
+                random_order: false,
             } => {
                 assert_eq!(origin, None);
                 assert_eq!(destination, Zone::Battlefield);

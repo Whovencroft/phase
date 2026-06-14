@@ -7437,6 +7437,7 @@ mod tests {
                 enter_with_counters: vec![],
                 face_down_profile: None,
                 library_position: None,
+                random_order: false,
             },
             vec![],
             ObjectId(900),
