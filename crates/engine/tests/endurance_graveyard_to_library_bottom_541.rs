@@ -27,7 +27,6 @@ use engine::types::game_state::{CastPaymentMode, WaitingFor};
 use engine::types::identifiers::ObjectId;
 use engine::types::mana::ManaCost;
 use engine::types::phase::Phase;
-use engine::types::zones::Zone;
 
 /// Endurance's ETB clause, driven through a sorcery host.
 const ENDURANCE_CLAUSE: &str =
@@ -44,8 +43,8 @@ fn endurance_moves_all_graveyard_cards_to_library_bottom() {
 
     // Seed P0's library with two cards so we can verify the graveyard cards
     // end up BELOW the existing library contents.
-    let lib_top = scenario.add_card_to_library_top(P0, "Lib Top");
-    let lib_second = scenario.add_card_to_library_top(P0, "Lib Second");
+    let _lib_top = scenario.add_card_to_library_top(P0, "Lib Top");
+    let _lib_second = scenario.add_card_to_library_top(P0, "Lib Second");
     // After adds: library = [Lib Second (top/index 0), Lib Top (index 1)]
 
     // A free sorcery carrying Endurance's clause.
