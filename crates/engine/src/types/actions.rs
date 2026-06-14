@@ -970,7 +970,6 @@ impl DebugAction {
                 object_id,
                 to_zone,
                 library_position,
-                random_order: false,
                 ..
             } => {
                 let position = match (to_zone, library_position) {

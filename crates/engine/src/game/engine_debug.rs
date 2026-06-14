@@ -29,7 +29,6 @@ pub fn apply_debug_action(
             object_id,
             to_zone,
             library_position,
-            random_order: false,
             simulate,
         } => {
             validate_object(state, object_id)?;
@@ -1136,7 +1135,6 @@ mod tests {
                 object_id: to_top,
                 to_zone: Zone::Library,
                 library_position: Some(LibraryPosition::Top),
-                random_order: false,
                 simulate: false,
             }),
         )
@@ -1152,7 +1150,6 @@ mod tests {
                 object_id: to_bottom,
                 to_zone: Zone::Library,
                 library_position: Some(LibraryPosition::Bottom),
-                random_order: false,
                 simulate: false,
             }),
         )
@@ -1194,7 +1191,6 @@ mod tests {
                 object_id: staged,
                 to_zone: Zone::Battlefield,
                 library_position: None,
-                random_order: false,
                 simulate: false,
             }),
         )
