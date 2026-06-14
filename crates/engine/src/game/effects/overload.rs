@@ -142,6 +142,7 @@ fn transform_effect_in_place(effect: &mut Effect) {
             up_to: _,         // dropped: ChangeZoneAll has no count semantics
             enter_with_counters: _, // dropped: hidden-zone exile, no counters
             face_down_profile: _, // dropped: overload corpus is hidden-zone exile, never face-down entry
+            library_position: None,
         } => Effect::ChangeZoneAll {
             origin,
             destination,
@@ -150,6 +151,7 @@ fn transform_effect_in_place(effect: &mut Effect) {
             enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             enter_with_counters: vec![],
             face_down_profile: None,
+            library_position: None,
         },
         // Effects without an all-matching counterpart (e.g. `Counter` for
         // Counterflux) are preserved as-is. No overload corpus card has a

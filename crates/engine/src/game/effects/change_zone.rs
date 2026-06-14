@@ -2,8 +2,8 @@ use rand::Rng;
 
 use crate::game::zones;
 use crate::types::ability::{
-    ControllerRef, Duration, Effect, EffectError, EffectKind, FilterProp, ResolvedAbility,
-    TargetChoiceTiming, TargetFilter, TargetSelectionMode, TypedFilter,
+    ControllerRef, Duration, Effect, EffectError, EffectKind, FilterProp, LibraryPosition,
+    ResolvedAbility, TargetChoiceTiming, TargetFilter, TargetSelectionMode, TypedFilter,
 };
 #[cfg(test)]
 use crate::types::ability::{EffectScope, TapStateChange};
@@ -415,6 +415,7 @@ pub fn resolve(
                 &effect_enter_with_counters,
                 face_down_profile.as_ref(),
                 track_exiled_by_source,
+                None,
                 events,
             ) {
                 ZoneMoveResult::Done => {
@@ -479,6 +480,7 @@ pub fn resolve(
                 &effect_enter_with_counters,
                 face_down_profile.as_ref(),
                 track_exiled_by_source,
+                None,
                 events,
             ) {
                 ZoneMoveResult::Done => {
@@ -568,6 +570,7 @@ pub fn resolve(
         duration: ability.duration.clone(),
         track_exiled_by_source,
         face_down_profile: face_down_profile.clone(),
+        library_placement: None,
     };
     let _ = owner_library; // routing handled by move_to_zone (CR 400.7)
 
@@ -623,6 +626,7 @@ pub fn resolve(
                         // the resumed members of a paused face-down return still
                         // enter face down.
                         face_down_profile: ctx.face_down_profile.clone(),
+                        library_placement: ctx.library_placement,
                         effect_kind: EffectKind::from(&ability.effect),
                     });
                 return Ok(());
@@ -652,6 +656,7 @@ pub fn resolve(
                         // the resumed members of a paused face-down return still
                         // enter face down.
                         face_down_profile: ctx.face_down_profile.clone(),
+                        library_placement: ctx.library_placement,
                         effect_kind: EffectKind::from(&ability.effect),
                     });
                 // CR 614.12a: park (don't clobber) — a Devour as-enters sacrifice
@@ -701,6 +706,9 @@ pub(crate) struct ChangeZoneIterationCtx {
     /// the battlefield with these characteristics ("return it face down ... It's
     /// a Forest land" — Yedora). `None` = normal face-up entry.
     pub face_down_profile: Option<crate::types::ability::FaceDownProfile>,
+    /// CR 401.4 + CR 701.24a: When `Some`, suppresses auto-shuffle and places
+    /// each object at the specified library position.
+    pub library_placement: Option<LibraryPosition>,
 }
 
 /// Move one object through the full zone-change pipeline used by the
@@ -757,6 +765,7 @@ pub(crate) fn process_one_zone_move(
         &ctx.enter_with_counters,
         ctx.face_down_profile.as_ref(),
         ctx.track_exiled_by_source,
+        ctx.library_placement,
         events,
     );
 
@@ -784,7 +793,7 @@ pub fn resolve_all(
     // `InAnyZone`, scan their union; otherwise fall back to the explicit `origin`
     // (or `Battlefield`). Single-zone filters (`InZone` alone) preserve legacy
     // behavior — only the multi-zone shape opts into the union scan.
-    let (origin_zones, dest_zone, target_filter, enter_tapped, enter_with_counters) = match &ability
+    let (origin_zones, dest_zone, target_filter, enter_tapped, enter_with_counters, effect_library_position) = match &ability
         .effect
     {
         Effect::ChangeZoneAll {
@@ -795,6 +804,7 @@ pub fn resolve_all(
             enter_tapped,
             enter_with_counters,
             face_down_profile: _,
+            library_position,
         } => {
             let extracted = target.extract_zones();
             let scan_zones = if extracted.len() > 1 {
@@ -825,6 +835,7 @@ pub fn resolve_all(
                 target.clone(),
                 *enter_tapped,
                 resolved_counters,
+                library_position.clone(),
             )
         }
         _ => return Err(EffectError::MissingParam("ChangeZoneAll".to_string())),
@@ -1010,6 +1021,15 @@ pub fn resolve_all(
         state.devour_eligible_snapshot = Some(state.battlefield.iter().copied().collect());
     }
 
+    // CR 401.4: When placing objects on the bottom of a library "in a random
+    // order", randomize the processing order so the final bottom-to-top sequence
+    // is non-deterministic without shuffling the rest of the library.
+    let mut matching = matching;
+    if effect_library_position.is_some() {
+        use rand::seq::SliceRandom;
+        matching.shuffle(&mut state.rng);
+    }
+
     let mut moved_count: i32 = 0;
     let mut departed: Vec<ObjectId> = Vec::new();
     for (i, obj_id) in matching.iter().enumerate() {
@@ -1041,6 +1061,7 @@ pub fn resolve_all(
             &enter_with_counters,
             face_down_profile.as_ref(),
             track_exiled_by_source,
+            effect_library_position.clone(),
             events,
         ) {
             ZoneMoveResult::Done => {
@@ -1103,6 +1124,7 @@ pub fn resolve_all(
                         track_exiled_by_source,
                         moved_count: Some(moved_count),
                         face_down_profile: face_down_profile.clone(),
+                        library_placement: effect_library_position.clone(),
                         effect_kind: EffectKind::from(&ability.effect),
                     });
                 crate::game::replacement::park_waiting_for(state, player);
@@ -1143,13 +1165,13 @@ pub fn resolve_all(
                         // resumed members of a paused face-down mass return enter
                         // face down.
                         face_down_profile: face_down_profile.clone(),
+                        library_placement: effect_library_position.clone(),
                         effect_kind: EffectKind::from(&ability.effect),
                     });
                 return Ok(());
             }
         }
     }
-
     // CR 614.13a: the whole co-entry event completed without pausing — clear the
     // pre-entry Devour snapshot (its lifetime = this one ChangeZone-to-battlefield
     // event). NOT cleared on the NeedsChoice pause above (the paused devourer's
@@ -1978,6 +2000,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -2059,6 +2082,7 @@ mod tests {
                 up_to: false,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -2652,6 +2676,7 @@ mod tests {
             &[],
             None,
             false,
+            None,
             &mut events,
         );
         assert!(matches!(result, ZoneMoveResult::Done));
@@ -2732,6 +2757,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -2782,6 +2808,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![TargetRef::Player(PlayerId(1))],
             ObjectId(500),
@@ -2871,6 +2898,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -3006,6 +3034,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![TargetRef::Player(PlayerId(1))],
             ObjectId(500),
@@ -3079,6 +3108,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Tapped,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(500),
@@ -3111,6 +3141,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![TargetRef::Player(PlayerId(1))],
             ObjectId(500),
@@ -3184,6 +3215,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             source_id,
@@ -3287,6 +3319,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             source_id,
@@ -3340,6 +3373,7 @@ mod tests {
                 up_to: false,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![TargetRef::Object(obj_id)],
             source_id,
@@ -3395,6 +3429,7 @@ mod tests {
                 up_to: false,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![TargetRef::Object(obj_id)],
             source_id,
@@ -3446,6 +3481,7 @@ mod tests {
                 up_to: false,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             obj_id,
@@ -3503,6 +3539,7 @@ mod tests {
                 up_to: true,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -4766,6 +4803,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(500),
@@ -4841,6 +4879,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -4892,6 +4931,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -4990,6 +5030,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             // Parent target supplies the "that name" referent.
             vec![TargetRef::Object(seed)],
@@ -5136,6 +5177,7 @@ mod tests {
                     enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     enter_with_counters: vec![],
                     face_down_profile: None,
+                    library_position: None,
                 },
                 vec![TargetRef::Object(seed)],
                 ObjectId(100),
@@ -5338,6 +5380,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -5405,6 +5448,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Tapped,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -5486,6 +5530,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -5566,6 +5611,7 @@ mod tests {
                     subtypes: vec!["Cyberman".to_string()],
                     ward: None,
                 }),
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -5640,6 +5686,7 @@ mod tests {
                 enter_tapped: EtbTapState::Tapped,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -5710,6 +5757,7 @@ mod tests {
                 enter_tapped: EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -5748,6 +5796,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: Some(FaceDownProfile::vanilla_2_2()),
+                library_position: None,
             },
             vec![],
             ObjectId(100),
@@ -6106,6 +6155,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(100),

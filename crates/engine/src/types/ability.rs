@@ -6946,6 +6946,13 @@ pub enum Effect {
         /// 708.3) with these characteristics. `None` = normal face-up entry.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         face_down_profile: Option<FaceDownProfile>,
+        /// CR 401.4 + CR 701.24a: When `Some`, each object is placed at the
+        /// specified library position WITHOUT triggering the auto-shuffle
+        /// convention. `None` = default behavior (auto-shuffle on library
+        /// entry). Covers Endurance-style "puts all the cards from their
+        /// graveyard on the bottom of their library in a random order."
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        library_position: Option<LibraryPosition>,
     },
     /// CR 701.20e + CR 608.2c: Look at top N cards (shown only to the looking player),
     /// select some to keep per the effect's instructions, rest go elsewhere.

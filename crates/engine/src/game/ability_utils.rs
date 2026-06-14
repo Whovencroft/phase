@@ -7436,6 +7436,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
             vec![],
             ObjectId(900),

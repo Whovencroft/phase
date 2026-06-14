@@ -93,13 +93,13 @@ use crate::types::ability::{
     ChooseFromZoneConstraint, Chooser, CombatDamageScope, Comparator, ConjureCard, ConjureSource,
     ContinuousModification, ControllerRef, DamageModification, DamageSource,
     DelayedTriggerCondition, DoubleTarget, Duration, Effect, EffectScope, FilterProp,
-    GameRestriction, IntensityScope, IterationKindBinding, ManaProduction, ManaSpendPermission,
-    MultiTargetSpec, ObjectProperty, ObjectScope, PlayerFilter, PlayerRelation, PlayerScope,
-    PreventionAmount, PreventionScope, ProhibitedActivity, PtValue, QuantityExpr, QuantityRef,
-    ReplacementDefinition, RestrictionExpiry, RestrictionPlayerScope, RoundingMode,
-    StaticCondition, StaticDefinition, StepSkipTarget, SubAbilityLink, TapStateChange,
-    TargetFilter, TargetSelectionMode, ThisWayCause, TriggerCondition, TriggerDefinition,
-    TypeFilter, TypedFilter, UnlessPayModifier, UntilCondition, ZoneOwner,
+    GameRestriction, IntensityScope, IterationKindBinding, LibraryPosition, ManaProduction,
+    ManaSpendPermission, MultiTargetSpec, ObjectProperty, ObjectScope, PlayerFilter,
+    PlayerRelation, PlayerScope, PreventionAmount, PreventionScope, ProhibitedActivity, PtValue,
+    QuantityExpr, QuantityRef, ReplacementDefinition, RestrictionExpiry, RestrictionPlayerScope,
+    RoundingMode, StaticCondition, StaticDefinition, StepSkipTarget, SubAbilityLink,
+    TapStateChange, TargetFilter, TargetSelectionMode, ThisWayCause, TriggerCondition,
+    TriggerDefinition, TypeFilter, TypedFilter, UnlessPayModifier, UntilCondition, ZoneOwner,
 };
 #[cfg(test)]
 use crate::types::ability::{AttackScope, AttackSubject};
@@ -1911,6 +1911,7 @@ fn try_parse_airbend_clause(tp: TextPair<'_>) -> Option<ParsedEffectClause> {
             enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             enter_with_counters: vec![],
             face_down_profile: None,
+            library_position: None,
         }
     } else {
         Effect::ChangeZone {
@@ -1925,6 +1926,7 @@ fn try_parse_airbend_clause(tp: TextPair<'_>) -> Option<ParsedEffectClause> {
             up_to: false,
             enter_with_counters: vec![],
             face_down_profile: None,
+            library_position: None,
         }
     };
 
@@ -15031,6 +15033,7 @@ fn try_parse_return_target_and_same_name_from_your_graveyard(
             enter_tapped,
             enter_with_counters: vec![],
             face_down_profile: None,
+            library_position: None,
         },
     )));
     Some(def)
@@ -17876,6 +17879,15 @@ fn try_parse_put_zone_change_parts(
                 // `all`/`each` with transformed, attacking, or up-to qualifiers;
                 // those remain on the single-object ChangeZone path until a
                 // real card needs corresponding ChangeZoneAll fields.
+                // CR 401.4: When the destination is "on the bottom of" a
+                // library, suppress auto-shuffle and place at the bottom.
+                let library_position = if needle == " on the bottom of" {
+                    Some(LibraryPosition::Bottom)
+                } else if needle == " on top of" {
+                    Some(LibraryPosition::Top)
+                } else {
+                    None
+                };
                 return Some((
                     Effect::ChangeZoneAll {
                         origin,
@@ -17887,6 +17899,7 @@ fn try_parse_put_zone_change_parts(
                         ),
                         enter_with_counters: vec![],
                         face_down_profile: None,
+                        library_position,
                     },
                     choice_count,
                 ));
@@ -22714,6 +22727,7 @@ mod tests {
                     enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     enter_with_counters: _,
                     face_down_profile: None,
+                    library_position: None,
                 }
             ),
             "exile target player's graveyard should be ChangeZoneAll with origin=Graveyard, target=Player, got {e:?}"
@@ -22777,6 +22791,7 @@ mod tests {
                     enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     enter_with_counters: _,
                     face_down_profile: None,
+                    library_position: None,
                 }
             ),
             "should produce ChangeZoneAll from Exile to Graveyard with ExiledBySource, got {e:?}"
@@ -25470,6 +25485,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: _,
                 face_down_profile: None,
+                library_position: None,
             }
         ));
 
@@ -25487,6 +25503,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: _,
                 face_down_profile: None,
+                library_position: None,
             }
         ));
 
@@ -44502,6 +44519,36 @@ mod tests {
         }
     }
 
+    /// Issue #541 — Endurance-style mass graveyard-to-library-bottom:
+    /// "puts all the cards from their graveyard on the bottom of their library
+    /// in a random order" must produce `ChangeZoneAll` with
+    /// `library_position: Some(Bottom)` so the zone pipeline suppresses the
+    /// auto-shuffle and places cards at the bottom.
+    #[test]
+    fn put_all_from_graveyard_on_bottom_sets_library_position() {
+        let text = "puts all the cards from their graveyard on the bottom of their library in a random order";
+        let lower = text.to_lowercase();
+        let effect = try_parse_put_zone_change(&lower, text)
+            .expect("expected ChangeZoneAll for mass put-on-bottom");
+        match effect {
+            Effect::ChangeZoneAll {
+                origin,
+                destination,
+                library_position,
+                ..
+            } => {
+                assert_eq!(origin, Some(Zone::Graveyard));
+                assert_eq!(destination, Zone::Library);
+                assert_eq!(
+                    library_position,
+                    Some(LibraryPosition::Bottom),
+                    "library_position must be Some(Bottom) to suppress auto-shuffle"
+                );
+            }
+            other => panic!("expected ChangeZoneAll, got {other:?}"),
+        }
+    }
+
     /// CR 107.1c + CR 608.2c — Ghalta, Stampede Tyrant class:
     /// "put any number of creature cards from your hand onto the battlefield"
     /// is a non-targeted resolution-time choice over 0..=all eligible cards,
@@ -46800,6 +46847,7 @@ mod snapshot_tests {
             enter_tapped,
             enter_with_counters: _,
             face_down_profile: None,
+            library_position: None,
         } = &*same_name.effect
         else {
             panic!("expected ChangeZoneAll tail, got {:?}", same_name.effect);

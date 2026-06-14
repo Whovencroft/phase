@@ -572,6 +572,7 @@ fn bind_tracked_set_to_effect(effect: &mut Effect, real_id: TrackedSetId) {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             };
         }
         _ => {}
@@ -1033,6 +1034,7 @@ mod tests {
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             },
         );
         let ability = ResolvedAbility::new(

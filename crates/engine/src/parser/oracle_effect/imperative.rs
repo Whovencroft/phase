@@ -1740,6 +1740,7 @@ pub(super) fn lower_targeted_action_ast(ast: TargetedImperativeAst) -> Effect {
                 // counters (e.g. a finality counter on Shilgengar's mass return).
                 enter_with_counters,
                 face_down_profile: None,
+                library_position: None,
             }
         }
         TargetedImperativeAst::Fight { target } => Effect::Fight {
@@ -2311,6 +2312,7 @@ pub(super) fn lower_search_and_creation_ast(ast: SearchCreationImperativeAst) ->
             enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             enter_with_counters: vec![],
             face_down_profile: None,
+            library_position: None,
         },
     }
 }
@@ -4037,6 +4039,7 @@ pub(super) fn lower_put_ast(ast: PutImperativeAst) -> Effect {
             enter_tapped: crate::types::zones::EtbTapState::from_legacy_bool(enter_tapped),
             enter_with_counters: vec![],
             face_down_profile: None,
+            library_position: None,
         },
         PutImperativeAst::ZoneChange {
             origin,
@@ -4069,6 +4072,7 @@ pub(super) fn lower_put_ast(ast: PutImperativeAst) -> Effect {
                     enter_tapped: crate::types::zones::EtbTapState::from_legacy_bool(enter_tapped),
                     enter_with_counters: vec![],
                     face_down_profile: None,
+                    library_position: None,
                 }
             } else {
                 Effect::ChangeZone {
@@ -4085,6 +4089,7 @@ pub(super) fn lower_put_ast(ast: PutImperativeAst) -> Effect {
                     up_to,
                     enter_with_counters,
                     face_down_profile: None,
+                    library_position: None,
                 }
             }
         }
@@ -4844,6 +4849,7 @@ fn change_zone_all_to_library_effect(origin: Zone) -> Effect {
         enter_tapped: crate::types::zones::EtbTapState::Unspecified,
         enter_with_counters: vec![],
         face_down_profile: None,
+        library_position: None,
     }
 }
 
@@ -7283,6 +7289,7 @@ pub(super) fn lower_imperative_family_ast(ast: ImperativeFamilyAst) -> ParsedEff
                 enter_tapped: crate::types::zones::EtbTapState::from_legacy_bool(enter_tapped),
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             };
             let complement = Effect::ChangeZoneAll {
                 origin: None,
@@ -7292,6 +7299,7 @@ pub(super) fn lower_imperative_family_ast(ast: ImperativeFamilyAst) -> ParsedEff
                 enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 enter_with_counters: vec![],
                 face_down_profile: None,
+                library_position: None,
             };
             let mut clause = parsed_clause(primary);
             clause.sub_ability = Some(Box::new(AbilityDefinition::new(
@@ -7873,6 +7881,7 @@ pub(super) fn lower_zone_counter_ast(ast: ZoneCounterImperativeAst) -> Effect {
                     enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     enter_with_counters: vec![],
                     face_down_profile: None,
+                    library_position: None,
                 }
             } else {
                 Effect::ChangeZone {
@@ -7887,6 +7896,7 @@ pub(super) fn lower_zone_counter_ast(ast: ZoneCounterImperativeAst) -> Effect {
                     up_to: false,
                     enter_with_counters,
                     face_down_profile: None,
+                    library_position: None,
                 }
             }
         }
@@ -9600,6 +9610,7 @@ mod tests {
                 enter_tapped,
                 enter_with_counters: _,
                 face_down_profile: None,
+                library_position: None,
             } => {
                 assert_eq!(origin, None);
                 assert_eq!(destination, Zone::Battlefield);
