@@ -850,13 +850,13 @@ pub fn resolve_all(
     };
     let origin_zone = origin_zones[0];
 
-    // CR 400.6 + CR 400.3: `TargetFilter::Controller` / `TargetFilter::Player`
+    // CR 400.6 + CR 400.3: `TargetFilter::Controller` / player-anaphor filters
     // in a mass zone-change reference a *player*, not a set of objects. Such
     // filters arise from phrases like "shuffle your hand into your library"
-    // (Controller) or "that player shuffles their hand into their library"
-    // (Player, with the subject supplying the target at resolution). Translate
-    // them here to "all cards owned by that player in the origin zone" — the
-    // object-level matcher would otherwise reject them outright.
+    // (Controller) or "that/target player puts all cards from their graveyard
+    // into their library" (Player / ParentTarget). Translate them here to "all
+    // cards owned by that player in the origin zone" — the object-level matcher
+    // would otherwise reject them outright.
     let player_scope: Option<crate::types::player::PlayerId> = match &target_filter {
         TargetFilter::Controller => Some(ability.controller),
         TargetFilter::Player => ability
@@ -867,6 +867,10 @@ pub fn resolve_all(
                 _ => None,
             })
             .or(Some(ability.controller)),
+        TargetFilter::ParentTarget => ability.targets.iter().find_map(|t| match t {
+            crate::types::ability::TargetRef::Player(p) => Some(*p),
+            _ => None,
+        }),
         _ => None,
     };
 
@@ -1031,7 +1035,9 @@ pub fn resolve_all(
 
     // CR 401.4: When placing objects on the bottom of a library "in a random
     // order", randomize the processing order so the final bottom-to-top sequence
-    // is non-deterministic without shuffling the rest of the library.
+    // is non-deterministic without shuffling the rest of the library. Top
+    // placement remains ordered because repeated insertion at index 0 already
+    // defines the final stack.
     let mut matching = matching;
     if random_order {
         use rand::seq::SliceRandom;
