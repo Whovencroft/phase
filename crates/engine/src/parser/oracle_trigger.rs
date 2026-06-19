@@ -9332,8 +9332,6 @@ fn try_parse_self_or_another_controlled_subtype_enters(
 fn try_parse_controlled_chosen_type_enters(
     lower: &str,
 ) -> Option<(TriggerMode, TriggerDefinition)> {
-    use nom::bytes::complete::take_until;
-
     // Detect "another" prefix to set the Another property.
     let (after_prefix, another) = alt((
         value(true, tag::<_, _, OracleError<'_>>("whenever another ")),
@@ -31974,6 +31972,28 @@ mod controlled_chosen_type_enters_tests {
         let (mode, def) = result.unwrap();
         assert_eq!(mode, TriggerMode::ChangesZone);
         assert_eq!(def.destination, Some(Zone::Battlefield));
+    }
+
+    /// Production dispatch must reach the chosen-type parser before the bare
+    /// controlled-subtype parser.
+    #[test]
+    fn dispatch_routes_chosen_type_enters_before_bare_subtype_parser() {
+        let input = "whenever a permanent you control of the chosen type enters the battlefield";
+        let result = try_parse_special_trigger_pattern(input);
+        assert!(result.is_some(), "dispatch should parse: {input}");
+        let (mode, def) = result.unwrap();
+        assert_eq!(mode, TriggerMode::ChangesZone);
+        match &def.valid_card {
+            Some(TargetFilter::Typed(typed)) => {
+                assert_eq!(typed.controller, Some(ControllerRef::You));
+                assert!(
+                    typed.properties.contains(&FilterProp::IsChosenCreatureType),
+                    "expected dispatch to preserve IsChosenCreatureType prop, got {:?}",
+                    typed.properties
+                );
+            }
+            other => panic!("expected Typed filter, got {other:?}"),
+        }
     }
 
     /// Molten Echoes: "Whenever a nontoken creature you control of the chosen
