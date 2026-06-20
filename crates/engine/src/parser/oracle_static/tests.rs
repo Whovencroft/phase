@@ -5108,6 +5108,108 @@ fn parse_continuous_modifications_grants_all_activated_abilities_of_exiled() {
     );
 }
 
+/// CR 305.6 + CR 305.7 + CR 205.3i: "gain all basic land types" (and the
+/// has/have/are/is copula variants) maps to `AddAllBasicLandTypes`; "gain all
+/// land types" maps to `AddAllLandTypes`. Building-block coverage for the whole
+/// "[lands you control] gain all basic land types until <duration>" class
+/// (Energybending), not a single card.
+#[test]
+fn parse_continuous_modifications_gain_all_basic_land_types() {
+    for predicate in [
+        "gain all basic land types",
+        "gains all basic land types",
+        "have all basic land types",
+        "has all basic land types",
+        "are all basic land types",
+        "is all basic land types",
+        "gain all basic land types.",
+    ] {
+        assert_eq!(
+            parse_continuous_modifications(predicate),
+            vec![ContinuousModification::AddAllBasicLandTypes],
+            "predicate: {predicate}"
+        );
+    }
+
+    // CR 205.3i: the broader "all land types" form grants every land subtype.
+    for predicate in ["gain all land types", "have all land types"] {
+        assert_eq!(
+            parse_continuous_modifications(predicate),
+            vec![ContinuousModification::AddAllLandTypes],
+            "predicate: {predicate}"
+        );
+    }
+
+    // Negative: a single named basic land type must NOT route through the
+    // all-types path (it is owned by the additive/replacement type parsers).
+    assert!(
+        !parse_continuous_modifications("gain all basic land types")
+            .iter()
+            .any(|m| matches!(m, ContinuousModification::AddAllLandTypes)),
+        "'all basic land types' must not be widened to all 17 land types"
+    );
+}
+
+/// CR 305.6 + CR 611.2a: Energybending's full Oracle text — "Lands you control
+/// gain all basic land types until end of turn. Draw a card." — must parse with
+/// ZERO `Effect::Unimplemented`. The land-type clause lowers to a
+/// `GenericEffect { AddAllBasicLandTypes }` over "lands you control" for
+/// `UntilEndOfTurn`, with "Draw a card" chained as a `SequentialSibling`
+/// `Effect::Draw` sub-ability.
+#[test]
+fn energybending_full_oracle_has_no_unimplemented() {
+    use crate::parser::oracle::parse_oracle_text;
+    use crate::types::ability::{AbilityDefinition, Effect};
+
+    let parsed = parse_oracle_text(
+        "Lands you control gain all basic land types until end of turn.\nDraw a card.",
+        "Energybending",
+        &[],
+        &["Sorcery".to_string()],
+        &[],
+    );
+
+    // Walk the whole ability tree (each ability plus its sub_ability chain),
+    // since "Draw a card" is chained as a SequentialSibling under the land-type
+    // GenericEffect rather than appearing as a separate top-level ability.
+    fn walk<'a>(ability: &'a AbilityDefinition, out: &mut Vec<&'a Effect>) {
+        out.push(&ability.effect);
+        if let Some(sub) = &ability.sub_ability {
+            walk(sub, out);
+        }
+    }
+    let mut effects = Vec::new();
+    for ability in &parsed.abilities {
+        walk(ability, &mut effects);
+    }
+
+    for effect in &effects {
+        assert!(
+            !matches!(effect, Effect::Unimplemented { .. }),
+            "Energybending must not emit Effect::Unimplemented, got {effect:?}"
+        );
+    }
+    assert!(
+        effects.iter().any(|effect| matches!(
+            effect,
+            Effect::GenericEffect { static_abilities, .. }
+                if static_abilities.iter().any(|sd| sd
+                    .modifications
+                    .iter()
+                    .any(|m| matches!(m, ContinuousModification::AddAllBasicLandTypes)))
+        )),
+        "expected a GenericEffect adding all basic land types, got {:?}",
+        parsed.abilities
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Draw { .. })),
+        "expected a Draw effect, got {:?}",
+        parsed.abilities
+    );
+}
+
 #[test]
 fn static_pump_must_be_blocked_and_goaded_emits_all_defs() {
     let defs = parse_static_line_multi(
@@ -12399,6 +12501,34 @@ fn cant_cast_spells_with_chosen_name_parenthetical() {
         }
     );
     assert_eq!(def.affected, Some(TargetFilter::HasChosenName));
+}
+
+/// CR 101.2 + CR 107.3: Gaddock Teeg class — passive-voice prohibition on
+/// spells with {X} in their mana cost. Combines a type prefix ("noncreature")
+/// with `HasXInManaCost`. The engine enforces this via `cant_cast_filter_matches`
+/// → `SpellCastRecord.has_x_in_cost`.
+#[test]
+fn passive_noncreature_spells_with_x_in_mana_cost_cant_be_cast() {
+    let def = parse_static_line("Noncreature spells with {X} in their mana costs can't be cast.")
+        .unwrap();
+    assert_eq!(
+        def.mode,
+        StaticMode::CantBeCast {
+            who: ProhibitionScope::AllPlayers,
+        }
+    );
+    let Some(TargetFilter::Typed(tf)) = &def.affected else {
+        panic!("expected Typed filter, got {:?}", def.affected);
+    };
+    assert!(
+        tf.type_filters
+            .contains(&TypeFilter::Non(Box::new(TypeFilter::Creature))),
+        "expected noncreature type filter, got {tf:?}"
+    );
+    assert!(
+        tf.properties.contains(&FilterProp::HasXInManaCost),
+        "expected HasXInManaCost property, got {tf:?}"
+    );
 }
 
 // CR 201.3 / CR 113.6: Petrified Hamlet — "Lands with the chosen name
