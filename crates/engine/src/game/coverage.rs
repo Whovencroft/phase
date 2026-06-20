@@ -173,6 +173,12 @@ fn is_data_carrying_static(mode: &StaticMode) -> bool {
             // modifier kind + action list (Giant Ox, Hotshot Mechanic). Runtime
             // enforcement is in static_abilities.rs::object_crew_power_contribution.
             | StaticMode::CrewContribution { .. }
+            // CR 702 + CR 613.1f: CantHaveKeyword carries the denied Keyword
+            // discriminant (Archetype cycle). Runtime enforcement is in
+            // layers.rs::apply_cant_have_keyword_denials (layer 6, ability-
+            // removing effects). Parameterized — no registry entry; coverage
+            // support here.
+            | StaticMode::CantHaveKeyword { .. }
     )
 }
 
@@ -11129,6 +11135,38 @@ mod tests {
         assert!(
             is_static_supported(&supported, &trigger_registry, &static_registry),
             "a plain keyword-grant continuous static must be supported"
+        );
+    }
+
+    /// CR 113.11: CantHaveKeyword is a data-carrying static (parameterized by
+    /// keyword). Archetype of Imagination et al. must be covered once this arm
+    /// is present in `is_data_carrying_static()`.
+    #[test]
+    fn cant_have_keyword_static_has_no_coverage_gap() {
+        let mut face = make_face();
+        let oracle = "Creatures your opponents control lose flying and can't have or gain flying.";
+        face.oracle_text = Some(oracle.to_string());
+        face.static_abilities.push(StaticDefinition {
+            mode: StaticMode::CantHaveKeyword {
+                keyword: Keyword::Flying,
+            },
+            affected: Some(TargetFilter::Typed(
+                TypedFilter::creature().controller(ControllerRef::Opponent),
+            )),
+            modifications: vec![],
+            condition: None,
+            per_player_condition: None,
+            affected_zone: None,
+            effect_zone: None,
+            active_zones: vec![],
+            characteristic_defining: false,
+            description: Some(oracle.to_string()),
+            attack_defended: None,
+        });
+
+        assert!(
+            card_face_gaps(&face).is_empty(),
+            "CantHaveKeyword(Flying) should be covered by is_data_carrying_static()"
         );
     }
 }
