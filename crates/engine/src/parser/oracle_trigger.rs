@@ -7535,6 +7535,15 @@ fn try_parse_event(
     .map(|(tail, _)| tail);
     if let Some(tail) = leaves_tail {
         let tail = tail.trim_start();
+        // CR 603.2c + CR 603.6d: Strip trailing "during your turn" constraint
+        // before checking for "without dying" or bare tail. This supports
+        // Oni-Cult Anvil ("one or more artifacts you control leave the
+        // battlefield during your turn") and Suki, Courageous Rescuer
+        // ("another permanent you control leaves the battlefield during your
+        // turn").
+        let (tail, turn_constraint) = peel_trailing_turn_constraint(tail);
+        let during_your_turn =
+            matches!(turn_constraint, Some(TriggerConstraint::OnlyDuringYourTurn));
         let without_dying = all_consuming(tag::<_, _, OracleError<'_>>("without dying"))
             .parse(tail)
             .is_ok();
@@ -7544,6 +7553,11 @@ fn try_parse_event(
             def.valid_card = Some(subject.clone());
             if without_dying {
                 def.destination_constraint = DestinationConstraint::NotEquals(Zone::Graveyard);
+            }
+            if during_your_turn {
+                def.condition = Some(TriggerCondition::DuringPlayersTurn {
+                    player: PlayerFilter::Controller,
+                });
             }
             // CR 113.6k + CR 603.10: Self-referential LTB triggers (e.g. Oblivion Ring,
             // "when ~ leaves the battlefield") must continue to function after the
@@ -18305,6 +18319,62 @@ mod tests {
         assert!(
             !def.trigger_zones.contains(&Zone::Graveyard),
             "non-self-ref LTB must not extend to graveyard"
+        );
+    }
+
+    /// CR 603.2c + CR 603.6d: Batched "one or more artifacts you control leave the
+    /// battlefield during your turn" — Oni-Cult Anvil. The "during your turn" tail
+    /// becomes a DuringPlayersTurn condition; the trailing "only once each turn"
+    /// becomes an OncePerTurn constraint.
+    #[test]
+    fn trigger_one_or_more_artifacts_leave_battlefield_during_your_turn() {
+        let def = parse_trigger_line(
+            "Whenever one or more artifacts you control leave the battlefield during your turn, create a 1/1 colorless Construct artifact creature token. This ability triggers only once each turn.",
+            "Oni-Cult Anvil",
+        );
+        assert_eq!(def.mode, TriggerMode::LeavesBattlefield);
+        assert!(def.batched, "one or more must set batched flag");
+        assert_eq!(
+            def.condition,
+            Some(TriggerCondition::DuringPlayersTurn {
+                player: PlayerFilter::Controller,
+            }),
+            "during your turn must become DuringPlayersTurn condition"
+        );
+        assert_eq!(
+            def.constraint,
+            Some(TriggerConstraint::OncePerTurn),
+            "'only once each turn' must set OncePerTurn constraint"
+        );
+        assert!(
+            !def.trigger_zones.contains(&Zone::Graveyard),
+            "non-self-ref LTB must not extend to graveyard"
+        );
+    }
+
+    /// CR 603.6d: Singular "another permanent you control leaves the battlefield
+    /// during your turn" — Suki, Courageous Rescuer. Non-batched form with
+    /// "during your turn" as a DuringPlayersTurn condition and the trailing
+    /// "only once each turn" as an OncePerTurn constraint.
+    #[test]
+    fn trigger_another_permanent_leaves_battlefield_during_your_turn() {
+        let def = parse_trigger_line(
+            "Whenever another permanent you control leaves the battlefield during your turn, create a 1/1 white Ally creature token. This ability triggers only once each turn.",
+            "Suki, Courageous Rescuer",
+        );
+        assert_eq!(def.mode, TriggerMode::LeavesBattlefield);
+        assert!(!def.batched, "singular form must not set batched flag");
+        assert_eq!(
+            def.condition,
+            Some(TriggerCondition::DuringPlayersTurn {
+                player: PlayerFilter::Controller,
+            }),
+            "during your turn must become DuringPlayersTurn condition"
+        );
+        assert_eq!(
+            def.constraint,
+            Some(TriggerConstraint::OncePerTurn),
+            "'only once each turn' must set OncePerTurn constraint"
         );
     }
 
