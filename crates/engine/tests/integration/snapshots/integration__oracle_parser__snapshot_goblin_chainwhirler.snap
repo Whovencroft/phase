@@ -1,0 +1,76 @@
+---
+source: crates/engine/tests/integration/oracle_parser.rs
+expression: result
+---
+{
+  "abilities": [],
+  "triggers": [
+    {
+      "mode": "ChangesZone",
+      "execute": {
+        "kind": "Spell",
+        "effect": {
+          "type": "DamageAll",
+          "amount": {
+            "type": "Fixed",
+            "value": 1
+          },
+          "target": {
+            "type": "Or",
+            "filters": [
+              {
+                "type": "Typed",
+                "type_filters": [
+                  "Creature"
+                ],
+                "controller": "Opponent",
+                "properties": []
+              },
+              {
+                "type": "Typed",
+                "type_filters": [
+                  "Planeswalker"
+                ],
+                "controller": "Opponent",
+                "properties": []
+              }
+            ]
+          },
+          "player_filter": {
+            "type": "Opponent"
+          }
+        },
+        "cost": null,
+        "sub_ability": null,
+        "duration": null,
+        "description": null,
+        "target_prompt": null,
+        "condition": null,
+        "optional_targeting": false,
+        "optional": false,
+        "forward_result": false
+      },
+      "valid_card": {
+        "type": "SelfRef"
+      },
+      "origin": null,
+      "destination": "Battlefield",
+      "trigger_zones": [
+        "Battlefield"
+      ],
+      "phase": null,
+      "optional": false,
+      "damage_kind": "Any",
+      "secondary": false,
+      "valid_target": null,
+      "valid_source": null,
+      "description": "When ~ enters the battlefield, it deals 1 damage to each opponent and each creature and planeswalker they control.",
+      "constraint": null,
+      "condition": null,
+      "batched": false
+    }
+  ],
+  "statics": [],
+  "replacements": [],
+  "extractedKeywords": []
+}

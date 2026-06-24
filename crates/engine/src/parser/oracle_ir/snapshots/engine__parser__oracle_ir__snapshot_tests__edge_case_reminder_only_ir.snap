@@ -1,0 +1,9 @@
+---
+source: crates/engine/src/parser/oracle_ir/snapshot_tests.rs
+expression: "&ir"
+---
+{
+  "items": [],
+  "source_text": "({T}: Add {R}.)",
+  "card_name": "Mountain"
+}

@@ -1,0 +1,535 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'client/**'
+      - 'lobby-worker/**'
+      - 'scripts/**'
+      - 'Cargo.*'
+      - '.cargo/**'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'docker/**'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/release.yml'
+  pull_request:
+    branches: [main]
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust-lint:
+    name: Rust lint (fmt, clippy, parser gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the parser-combinator gate can diff against origin/main.
+          fetch-depth: 0
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+          cache-shared-key: rust-debug
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --exclude phase-tauri --all-targets --features engine/proptest -- -D warnings
+
+      - name: Parser combinator gate
+        # Diff-based gate: new parser code must use nom combinators, not
+        # string-matching methods. See crates/engine/src/parser/oracle_nom/PATTERNS.md.
+        run: |
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="origin/main"
+          fi
+          ./scripts/check-parser-combinators.sh "$BASE"
+
+      - name: Skill doc gate (oracle-parser SKILL.md)
+        # Asserts .claude/skills/oracle-parser/SKILL.md still matches the
+        # parser source tree: documented paths/symbols exist and the §3
+        # priority table mirrors the `// Priority` slots in oracle.rs.
+        run: ./scripts/check-skill-doc.sh
+
+      - name: Engine authority gate
+        # Diff-based gate: new engine code must use single-authority helpers
+        # (keyword queries via game/keywords.rs) instead of raw state pokes.
+        run: |
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="origin/main"
+          fi
+          ./scripts/check-engine-authorities.sh "$BASE"
+
+      - name: Test card-data load gate
+        # Diff-based gate: new test code must not reparse the full ~90 MB
+        # client/public/card-data.json (tens of seconds/test under nextest, and
+        # it self-skips in CI). Use support::shared_card_db() (fixture-backed).
+        run: |
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="origin/main"
+          fi
+          ./scripts/check-test-card-data-load.sh "$BASE"
+
+  rust-test:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+          cache-shared-key: rust-debug
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run tests
+        # PROPTEST_CASES split: PRs run a smaller case count for fast feedback;
+        # pushes to main run the default (256) so any property regression is
+        # caught before it lands on the branch that feeds staging/preview.
+        env:
+          PROPTEST_CASES: ${{ github.event_name == 'pull_request' && '32' || '256' }}
+        run: cargo nextest run --workspace --exclude phase-tauri --exclude mtgish-import --features engine/proptest --status-level fail --final-status-level fail
+
+  card-data-gate:
+    name: Card data (generate, validate, coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+          cache-shared-key: rust-debug
+
+      - name: Set cache keys
+        id: cache-keys
+        run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache MTGJSON data
+        # Scoped to AtomicCards.json under its own `mtgjson-atomic-` namespace —
+        # this job needs nothing else from data/mtgjson. The per-content
+        # namespace stops draft-pools (which populates only SetList + sets/,
+        # never AtomicCards) from clobbering this job's key with a partial dir.
+        #
+        # Exact weekly key, NO restore-keys: a new week misses, so the download
+        # step re-fetches fresh MTGJSON data (the weekly refresh we want); a
+        # restore-keys fallback would pin us to last week's AtomicCards forever
+        # because the download is file-existence-gated. Same-week runs reuse the
+        # exact-key hit.
+        id: mtgjson-cache
+        uses: actions/cache@v4
+        with:
+          path: data/mtgjson/AtomicCards.json
+          key: mtgjson-atomic-${{ steps.cache-keys.outputs.week }}
+
+      - name: Download MTGJSON data
+        # Gate on file existence, not cache-hit: actions/cache restore-keys can
+        # match a poisoned/partial entry (and CACHE_ON_FAILURE saves caches from
+        # failed runs), setting cache-hit=true while AtomicCards.json is absent.
+        # Gating the download on cache-hit then permanently skips it, breaking
+        # oracle-gen with "AtomicCards.json not found". Always run; fetch only
+        # when the file is missing so a poisoned cache self-heals.
+        run: |
+          if [ ! -f data/mtgjson/AtomicCards.json ]; then
+            mkdir -p data/mtgjson
+            source scripts/lib/mtgjson-fetch.sh
+            mtgjson_download AtomicCards.json data/mtgjson/AtomicCards.json
+          fi
+
+      - name: Cache generated card data
+        # Output of `oracle-gen` is deterministic given (MTGJSON input + engine
+        # source). Hash both into the key; on hit, skip the ~30k-card pass.
+        # Exact-match only (no restore-keys) — a stale hit would feed wrong
+        # card-data into the validate/coverage gates downstream. Cargo.lock is
+        # included so dep bumps that affect parsing (e.g. nom) invalidate.
+        id: cardgen-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/card-data.json
+            data/card-names.json
+          key: cardgen-${{ hashFiles('data/mtgjson/AtomicCards.json', 'crates/engine/src/**/*.rs', 'crates/engine/Cargo.toml', 'Cargo.lock') }}
+
+      - name: Generate card data
+        # All engine-backed tools in this job use the SAME (profile, features)
+        # pair — `[tool, cli]` — so the engine crate compiles exactly once and is
+        # reused as a cache hit by validate, coverage, and semantic-audit below.
+        # Mixing profiles/feature-sets (e.g. dev here, release elsewhere)
+        # re-fingerprints engine and forces a full recompile per variant.
+        if: steps.cardgen-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo run --profile tool --features cli --bin oracle-gen -- data/ --stats --names-out data/card-names.json > data/card-data.json
+
+      - name: Validate card-data against engine schema
+        # PR-time gate — the same parse the WASM does at runtime, run against
+        # the freshly produced card-data. If a parser/schema change makes the
+        # engine unable to read its own output, fail the build before merge.
+        # Same [tool, cli] fingerprint as card-gen above → engine cache hit.
+        run: cargo run --profile tool --features cli --bin card-data-validate -- data/card-data.json
+
+      - name: Card support coverage report
+        # Same [tool, cli] fingerprint as card-gen above → engine cache hit.
+        run: |
+          cargo run --profile tool --features cli --bin coverage-report -- data/ --all > data/coverage-data.json
+          jq '{total_cards, supported_cards, coverage_pct, coverage_by_format}' data/coverage-data.json > data/coverage-summary.json
+
+      - name: Coverage regression check (engine vs parser-honesty)
+        # Fails the build if a previously-supported card loses support because
+        # the engine now lacks a handler (non-ParseWarning gap). Parser-honesty
+        # flips (new ParseWarning:*) and genuinely-gained cards are informational.
+        # Baseline is main's last-good coverage-data.json published to R2.
+        # On push-to-main the check is informational only: the merge has already
+        # happened, and failing here blocks the R2 baseline republish below,
+        # wedging main red until a manual baseline upload (the PR #2339 /
+        # PR #2802 ratchet deadlock). PR and merge_group runs remain blocking.
+        continue-on-error: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          ./scripts/coverage-regression-check.sh \
+            "https://pub-fc5b5c2c6e774356ae3e730bb0326394.r2.dev/preview/coverage-data.json" \
+            data/coverage-data.json \
+            --fail-on-engine
+
+      - name: Parse-detail diff vs base baseline
+        # PR-only review aid (NEVER blocks — continue-on-error): surfaces the
+        # field-level parse changes this PR introduces, for the reviewing LLM.
+        # Unlike the regression check above (supported flips only), this diffs
+        # the full parse_details tree.
+        #
+        # Baseline = the PR's base.sha published coverage, fetched by its
+        # engine-source hash; head = the coverage built above from the merge
+        # commit (base.sha + PR). So head - baseline isolates EXACTLY this PR's
+        # parse changes, with no second coverage build and no cross-PR
+        # contamination — even when the PR is behind main (both sides move in
+        # lockstep). Path filter: identical engine-source hash => no parse
+        # change is possible => skip before the bin build. --features cli keeps
+        # the same [tool, cli] engine fingerprint as the steps above (lib cache
+        # hit; only the new bin links).
+        id: parsediff
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          BASE_HASH="$(./scripts/engine-source-hash.sh "$BASE_SHA")"
+          HEAD_HASH="$(./scripts/engine-source-hash.sh HEAD)"
+          if [ "$BASE_HASH" = "$HEAD_HASH" ]; then
+            echo "Engine source unchanged vs base ($BASE_HASH) — no parse change possible; skipping."
+            echo "produced=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$PR_NUMBER" > pr-number.txt
+          URL="https://pub-fc5b5c2c6e774356ae3e730bb0326394.r2.dev/parse-baselines/coverage-data-${BASE_HASH}.json"
+          if curl -fsSL --retry 3 --retry-delay 2 "$URL" -o coverage-base.json; then
+            cargo run --profile tool --features cli --bin coverage-parse-diff -- \
+              coverage-base.json data/coverage-data.json \
+              --base-sha "$BASE_SHA" \
+              --markdown parse-diff.md --json parse-diff.json
+          else
+            # Baseline not published yet (base.sha only just merged) or aged out
+            # of retention. NEVER fall back to the lagging preview/ snapshot —
+            # that reintroduces cross-PR contamination. Emit a pending marker;
+            # the comment job only UPDATES an existing sticky, never creates one
+            # for a pending note.
+            printf '<!-- coverage-parse-diff -->\n### Parse changes introduced by this PR\n\n_Baseline pending for `%s` — this populates once main publishes its coverage snapshot (a few minutes after that commit landed)._\n' "$BASE_SHA" > parse-diff.md
+          fi
+          echo "produced=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload parse-diff artifact
+        # Consumed by .github/workflows/coverage-parse-diff-comment.yml, which
+        # posts the sticky PR comment from the trusted workflow_run context.
+        if: github.event_name == 'pull_request' && steps.parsediff.outputs.produced == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: parse-diff
+          if-no-files-found: ignore
+          retention-days: 3
+          path: |
+            parse-diff.md
+            parse-diff.json
+            pr-number.txt
+
+      - name: Run semantic audit
+        # Produces data/semantic-audit.json with structured findings for cards
+        # that parse cleanly but disagree semantically with their Oracle text.
+        # Only runs on push-to-main because the only consumer is the R2 upload
+        # below (also main-only) — on a PR the JSON is written and discarded.
+        # Pass data/ explicitly — the binary's default lookup is
+        # `client/public/card-data.json` which doesn't exist on the ci.yml
+        # path (card-data is generated directly into data/ above).
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: cargo semantic-audit data/
+
+      - name: Stamp shared card_data_hash on coverage + audit JSONs
+        # Embed the same card-data hash in both files so downstream consumers
+        # can verify they're reading a consistent R2 snapshot. Gated to main
+        # because the only consumer is the R2 upload below.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          HASH=$(sha256sum data/card-data.json | awk '{print substr($1, 1, 16)}')
+          jq --arg h "$HASH" '. + {card_data_hash: $h}' data/semantic-audit.json > data/semantic-audit.json.tmp
+          mv data/semantic-audit.json.tmp data/semantic-audit.json
+          jq --arg h "$HASH" '. + {card_data_hash: $h}' data/coverage-data.json > data/coverage-data.json.tmp
+          mv data/coverage-data.json.tmp data/coverage-data.json
+
+      - name: Upload data to R2 (preview)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler r2 object put phase-rs-data/preview/card-data.json --file data/card-data.json --remote --content-type application/json --cache-control "public, max-age=60, must-revalidate"
+          npx wrangler r2 object put phase-rs-data/preview/card-names.json --file data/card-names.json --remote --content-type application/json --cache-control "public, max-age=60, must-revalidate"
+          npx wrangler r2 object put phase-rs-data/preview/coverage-data.json --file data/coverage-data.json --remote --content-type application/json --cache-control "public, max-age=60, must-revalidate"
+          npx wrangler r2 object put phase-rs-data/preview/coverage-summary.json --file data/coverage-summary.json --remote --content-type application/json --cache-control "public, max-age=60, must-revalidate"
+          npx wrangler r2 object put phase-rs-data/preview/semantic-audit.json --file data/semantic-audit.json --remote --content-type application/json --cache-control "public, max-age=60, must-revalidate"
+
+      - name: Publish immutable parse-diff baseline to R2
+        # Content-addressed sibling of the mutable preview/coverage-data.json
+        # write above: an immutable copy keyed by THIS commit's engine-source
+        # hash. The PR-side "Parse-detail diff" step fetches the copy matching
+        # its base.sha's hash, so its baseline is the exact main it forked onto
+        # — never the lagging preview/ snapshot (which mixes in other PRs'
+        # changes). Identical-source commits dedupe to one object, so storage is
+        # bounded by distinct parser states, not commit count. best-effort
+        # (continue-on-error): a missed publish just defers a PR's comment to
+        # "baseline pending" until the next main push, never wedges main.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          HASH="$(./scripts/engine-source-hash.sh HEAD)"
+          npx wrangler r2 object put "phase-rs-data/parse-baselines/coverage-data-${HASH}.json" \
+            --file data/coverage-data.json --remote --content-type application/json \
+            --cache-control "public, max-age=31536000, immutable"
+
+  draft-pools:
+    # Split out of card-data-gate because draft-pool-gen lives in draft-core and
+    # cannot take `--features cli` — it always needs its own `[tool, default]`
+    # engine fingerprint, distinct from the `[tool, cli]` build every other
+    # card-data tool shares. Keeping it inline forced a second full engine
+    # compile onto card-data-gate's critical path; here it runs in parallel.
+    # Its output (draft-pools.json) is not consumed by ci.yml — this is a
+    # main-only smoke test that draft-pool-gen still compiles and runs.
+    name: Draft pools (smoke)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # No wasm32 target: draft-pool-gen is a native binary. The target list
+          # isn't part of the rust-cache key, so omitting it still shares the
+          # rust-debug cache with card-data-gate.
+          cache-shared-key: rust-debug
+
+      - name: Set cache keys
+        id: cache-keys
+        run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache MTGJSON data
+        # Scoped to SetList.json + the per-set files this job populates, under
+        # its own `mtgjson-sets-` namespace so it can't collide with
+        # card-data-gate's `mtgjson-atomic-` key (this job never fetches
+        # AtomicCards). Exact weekly key, NO restore-keys: a new week misses and
+        # re-fetches fresh set data; same-week runs reuse the exact-key hit.
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/mtgjson/SetList.json
+            data/mtgjson/sets
+          key: mtgjson-sets-${{ steps.cache-keys.outputs.week }}
+
+      - name: Download MTGJSON SetList data
+        # fetch-draft-sets.sh enumerates draftable sets from SetList.json.
+        run: |
+          mkdir -p data/mtgjson
+          if [ ! -f data/mtgjson/SetList.json ]; then
+            source scripts/lib/mtgjson-fetch.sh
+            mtgjson_download SetList.json data/mtgjson/SetList.json
+          fi
+
+      - name: Download draft set data
+        run: ./scripts/fetch-draft-sets.sh
+
+      - name: Generate draft pools
+        # Profile `tool`, not `release`: release is the WASM-size profile
+        # (lto + codegen-units=1), the slowest compile in the repo, for a
+        # one-shot JSON transform.
+        run: cargo run --profile tool --bin draft-pool-gen -- data/mtgjson/sets data/draft-pools.json
+
+  wasm-check:
+    name: WASM compile check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+          cache-shared-key: rust-debug
+
+      - name: WASM compile check
+        run: cargo check --package engine-wasm --target wasm32-unknown-unknown
+
+  tauri-check:
+    name: Tauri compile check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache-shared-key: rust-tauri
+          cache-workspaces: |
+            . -> target
+            client/src-tauri -> target
+
+      - name: Install Linux Tauri build deps
+        # Required by phase-tauri's transitive dependencies (webkit2gtk, gtk).
+        # Without these, `cargo check -p phase-tauri` fails at the linker.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
+      - name: Stub frontend dist for tauri::generate_context!
+        # phase-tauri's build.rs runs `tauri::generate_context!()` which
+        # requires `frontendDist` (../dist per tauri.conf.json) to exist.
+        # An empty stub is enough for type-checking — we don't bundle assets.
+        run: |
+          mkdir -p client/dist
+          echo '<!doctype html><html></html>' > client/dist/index.html
+
+      - name: Stub phase-server sidecar + bundled resources for tauri-build
+        # tauri.conf.json declares `externalBin: ["binaries/phase-server"]`
+        # and bundled data resources, so tauri-build requires those paths to
+        # exist at check time. The real sidecar / data files are built in the
+        # release matrix; for PR-time compile checks we only need the paths to
+        # exist.
+        run: |
+          mkdir -p client/src-tauri/binaries client/public
+          touch client/src-tauri/binaries/phase-server-x86_64-unknown-linux-gnu
+          touch client/public/card-data.json
+          touch client/public/draft-pools.json
+
+      - name: Tauri compile check
+        # phase-tauri is excluded from the workspace clippy and nextest runs
+        # above (no proptest support, no tests). Without this step, compile
+        # errors in the desktop crate only surface at release time during the
+        # 30-45min build-tauri matrix. Catches them on every PR in ~3 min.
+        # Driven via --manifest-path because client/src-tauri is excluded
+        # from the root workspace, so `-p phase-tauri` cannot resolve it.
+        run: cargo check --locked --manifest-path client/src-tauri/Cargo.toml
+
+  rust-check:
+    name: Rust (fmt, clippy, test, coverage-gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - rust-lint
+      - rust-test
+      - card-data-gate
+      - draft-pools
+      - wasm-check
+      - tauri-check
+    if: always()
+    steps:
+      - name: Check split Rust jobs
+        env:
+          RUST_LINT_RESULT: ${{ needs.rust-lint.result }}
+          RUST_TEST_RESULT: ${{ needs.rust-test.result }}
+          CARD_DATA_RESULT: ${{ needs.card-data-gate.result }}
+          DRAFT_POOLS_RESULT: ${{ needs.draft-pools.result }}
+          WASM_RESULT: ${{ needs.wasm-check.result }}
+          TAURI_RESULT: ${{ needs.tauri-check.result }}
+        run: |
+          results="$RUST_LINT_RESULT $RUST_TEST_RESULT $CARD_DATA_RESULT $DRAFT_POOLS_RESULT $WASM_RESULT $TAURI_RESULT"
+          # `skipped` is a pass: draft-pools is main-only and is skipped on PRs.
+          for result in $results; do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "One or more split Rust jobs failed: $results"
+              exit 1
+            fi
+          done
+
+  lobby-worker-test:
+    name: Lobby worker (pnpm test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: lobby-worker/package-lock.json
+
+      - name: Install and test
+        run: |
+          cd lobby-worker
+          npm ci
+          pnpm test
+
+  frontend:
+    name: Frontend (lint, type-check, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: cd client && pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: cd client && pnpm run lint
+
+      - name: Type check
+        run: cd client && pnpm run type-check
+
+      - name: Run tests with coverage
+        run: cd client && pnpm test -- --run --coverage

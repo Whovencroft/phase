@@ -1,0 +1,31 @@
+---
+source: crates/engine/tests/integration/oracle_parser.rs
+assertion_line: 48
+expression: result
+---
+{
+  "abilities": [
+    {
+      "kind": "Spell",
+      "effect": {
+        "type": "Counter",
+        "target": {
+          "type": "StackSpell"
+        }
+      },
+      "cost": null,
+      "sub_ability": null,
+      "duration": null,
+      "description": "Counter target spell.",
+      "target_prompt": null,
+      "condition": null,
+      "optional_targeting": false,
+      "optional": false,
+      "forward_result": false
+    }
+  ],
+  "triggers": [],
+  "statics": [],
+  "replacements": [],
+  "extractedKeywords": []
+}

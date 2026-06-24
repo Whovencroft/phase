@@ -1,0 +1,158 @@
+{
+  "$schema": "Suno track generation config for phase.rs audio theme",
+  "theme": {
+    "id": "planeswalker",
+    "name": "Planeswalker",
+    "version": 1,
+    "author": "phase.rs (AI-generated via Suno)",
+    "description": "Epic fantasy orchestral soundtrack inspired by collectible card game dueling"
+  },
+  "model": "V4_5PLUS",
+  "globalDefaults": {
+    "instrumental": true,
+    "customMode": true,
+    "persona": "Use Hall of the Planeswalkers as persona to lock in orchestral style"
+  },
+  "tracks": [
+    {
+      "id": "menu-main",
+      "context": "menu",
+      "phase": "any",
+      "title": "Hall of the Planeswalkers",
+      "style": "ALREADY GENERATED — this is the persona source track",
+      "label": "Hall of the Planeswalkers",
+      "notes": "Done. Used as persona for all other tracks."
+    },
+    {
+      "id": "menu-alt",
+      "context": "menu",
+      "phase": "any",
+      "title": "Between the Planes",
+      "style": "quieter and more reflective, like wandering through an ancient library at dusk, soft piano leading, strings gently swelling underneath, slow and contemplative, spacious and dreamlike",
+      "label": "Between the Planes",
+      "notes": "Alternate menu track. More subdued, reflective. For players who've been on the menu a while."
+    },
+    {
+      "id": "deck-builder",
+      "context": "deck_builder",
+      "phase": "any",
+      "title": "The Artificer's Workshop",
+      "style": "very minimal and calm, background music for quiet focus, gentle ambient warmth, sparse soft notes with lots of space between them, slow tempo, unobtrusive, like the hum of a warm room while you think",
+      "label": "The Artificer's Workshop",
+      "notes": "Deck building/collection browsing. Curious, intellectual, unhurried."
+    },
+    {
+      "id": "deck-builder-alt",
+      "context": "deck_builder",
+      "phase": "any",
+      "title": "Tome of Strategies",
+      "style": "quiet and unhurried, a single soft instrument at a time, long sustained notes, lots of silence, slow tempo, like background music in an empty cathedral, minimal and peaceful",
+      "label": "Tome of Strategies",
+      "notes": "Alternate deck builder. Warmer, more intimate."
+    },
+    {
+      "id": "lobby-waiting",
+      "context": "lobby",
+      "phase": "any",
+      "title": "The Summoning Circle",
+      "style": "anticipation building, two opponents about to face each other across a stone arena, low strings pulsing, tension rising slowly, medium tempo, the calm before the storm, something powerful is coming",
+      "label": "The Summoning Circle",
+      "notes": "Waiting for opponent/matchmaking. Building anticipation without anxiety."
+    },
+    {
+      "id": "battle-early-1",
+      "context": "battlefield",
+      "phase": "early",
+      "title": "Opening Gambit",
+      "style": "a chess match begins, pieces being carefully placed, strategic and measured, controlled tension, medium tempo, each move deliberate, the board is still open, low stakes but sharp focus",
+      "label": "Opening Gambit",
+      "notes": "Turns 1-4. Measured, strategic, pieces being placed. Low intensity but engaging."
+    },
+    {
+      "id": "battle-early-2",
+      "context": "battlefield",
+      "phase": "early",
+      "title": "First Draw",
+      "style": "the fog lifts over a battlefield at dawn, atmospheric and spacious, gentle tension, plucked strings, soft accents, a quiet scene before the armies clash, medium-slow tempo, setting the stage",
+      "label": "First Draw",
+      "notes": "Alternate early game. More atmospheric, setting the scene."
+    },
+    {
+      "id": "battle-mid-1",
+      "context": "battlefield",
+      "phase": "mid",
+      "title": "Clash of Wills",
+      "style": "the battle is fully joined, two armies clashing on an open field, driving and heroic, medium-fast tempo, bold and powerful, forces colliding, the fight surges back and forth, energetic but controlled",
+      "label": "Clash of Wills",
+      "notes": "Turns 5-9. The battle intensifies. Creatures clashing, spells flying."
+    },
+    {
+      "id": "battle-mid-2",
+      "context": "battlefield",
+      "phase": "mid",
+      "title": "Arcane Escalation",
+      "style": "powerful magic being unleashed, spells lighting up the sky, escalating intensity, urgent and dramatic, medium-fast tempo, arcane energy crackling, the stakes are rising with every exchange",
+      "label": "Arcane Escalation",
+      "notes": "Alternate midgame. More magical/arcane feeling. Spellcasting intensifies."
+    },
+    {
+      "id": "battle-mid-3",
+      "context": "battlefield",
+      "phase": "mid",
+      "title": "Creatures of the Aether",
+      "style": "summoning massive creatures into battle, soaring and adventurous, heroic melody, the tide could turn either way, medium-fast tempo, triumphant undertones, a dragon takes flight overhead",
+      "label": "Creatures of the Aether",
+      "notes": "Third midgame track. More heroic/adventurous. The tide could go either way."
+    },
+    {
+      "id": "battle-late-1",
+      "context": "battlefield",
+      "phase": "late",
+      "title": "Final Reckoning",
+      "style": "the final desperate assault, everything on the line, maximum intensity, fast tempo, thundering and relentless, both sides throwing everything they have, climactic and urgent, no turning back",
+      "label": "Final Reckoning",
+      "notes": "Turns 10+. All-out war. Life totals low, board state critical. Maximum dramatic intensity."
+    },
+    {
+      "id": "battle-late-2",
+      "context": "battlefield",
+      "phase": "late",
+      "title": "The Last Stand",
+      "style": "dark and ominous, one wrong move means defeat, relentless pounding rhythm, heavy and oppressive, fast tempo, the walls are closing in, survival mode, do or die, every second counts",
+      "label": "The Last Stand",
+      "notes": "Alternate late game. Darker, more ominous. When defeat is possible and every draw matters."
+    },
+    {
+      "id": "battle-any-1",
+      "context": "battlefield",
+      "phase": "any",
+      "title": "Duelist's Resolve",
+      "style": "steady determination, a duel between equals, balanced and versatile, medium tempo, adaptable energy that works early or late, confident but not reckless, the resolve of a seasoned warrior",
+      "label": "Duelist's Resolve",
+      "notes": "Phase-agnostic battlefield track. Works at any point in the game. Reliable all-rounder."
+    },
+    {
+      "id": "victory",
+      "context": "victory",
+      "phase": "any",
+      "title": "Triumphant Ascension",
+      "style": "glorious victory, the enemy falls, triumphant fanfare, celebration and glory, uplifting and soaring, major key, short and powerful, the crowd roars, you have conquered",
+      "label": "Triumphant Ascension",
+      "notes": "Victory screen. Short (60-90s ideal). Triumphant, satisfying, glorious."
+    },
+    {
+      "id": "defeat",
+      "context": "defeat",
+      "phase": "any",
+      "title": "Ashes of Defeat",
+      "style": "the dust settles on a lost battle, somber but dignified, a lone melody over muted strings, slow and reflective, bittersweet, not crushing — the fallen warrior will rise again",
+      "label": "Ashes of Defeat",
+      "notes": "Defeat screen. Short (60-90s ideal). Somber but not crushing. Dignity in defeat."
+    }
+  ],
+  "variations": {
+    "_comment": "Tracks where generating 2+ variations is valuable for A/B selection",
+    "high_value": ["battle-mid-1", "battle-late-1", "victory", "defeat"],
+    "reason": "These are the highest-impact tracks. Suno generates 2 per request anyway, so we get natural variations. For these 4, consider submitting 2 requests (4 candidates) to cherry-pick the best."
+  }
+}

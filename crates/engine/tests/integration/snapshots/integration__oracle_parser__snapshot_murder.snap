@@ -1,0 +1,37 @@
+---
+source: crates/engine/tests/oracle_parser.rs
+assertion_line: 32
+expression: result
+---
+{
+  "abilities": [
+    {
+      "kind": "Spell",
+      "effect": {
+        "type": "Destroy",
+        "target": {
+          "type": "Typed",
+          "type_filters": [
+            "Creature"
+          ],
+          "controller": null,
+          "properties": []
+        },
+        "cant_regenerate": false
+      },
+      "cost": null,
+      "sub_ability": null,
+      "duration": null,
+      "description": "Destroy target creature.",
+      "target_prompt": null,
+      "condition": null,
+      "optional_targeting": false,
+      "optional": false,
+      "forward_result": false
+    }
+  ],
+  "triggers": [],
+  "statics": [],
+  "replacements": [],
+  "extractedKeywords": []
+}

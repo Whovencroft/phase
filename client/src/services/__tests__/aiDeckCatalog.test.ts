@@ -1,0 +1,436 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { DeckCompatibilityResult } from "../deckCompatibility";
+import type { ParsedDeck } from "../deckParser";
+import { evaluateDeckCompatibility } from "../deckCompatibility";
+import { buildLegalAiDeckCatalog, filterByBracket, type AiDeckCandidate } from "../aiDeckCatalog";
+import { buildDeckCatalog } from "../deckCatalog";
+import { getCachedFeed, listSubscriptions } from "../feedService";
+import { getSharedAdapter } from "../../adapter/wasm-adapter";
+import { loadPreconDeckMap } from "../../hooks/useDecks";
+import { FEED_DECK_ORIGINS_KEY, STORAGE_KEY_PREFIX } from "../../constants/storage";
+import { BUNDLED_CEDH_DECKS } from "../../data/cedhDecks";
+import { CEDH_BRACKET } from "../cedhLock";
+import type { BracketEstimate } from "../../types/bracket";
+
+vi.mock("../deckCompatibility", () => ({
+  evaluateDeckCompatibility: vi.fn(),
+}));
+
+vi.mock("../../adapter/wasm-adapter", () => ({
+  getSharedAdapter: vi.fn(),
+}));
+
+/** Stub the shared adapter so `resolveBracket` returns the given estimate. */
+function stubBracketEstimate(estimate: BracketEstimate | null): void {
+  vi.mocked(getSharedAdapter).mockReturnValue({
+    estimateBracket: vi.fn(async () => estimate),
+  } as unknown as ReturnType<typeof getSharedAdapter>);
+}
+
+vi.mock("../feedService", () => ({
+  feedDeckToParsedDeck: vi.fn((deck: { main: ParsedDeck["main"]; sideboard?: ParsedDeck["sideboard"]; commander?: string[] }) => ({
+    main: deck.main,
+    sideboard: deck.sideboard ?? [],
+    commander: deck.commander,
+  })),
+  getCachedFeed: vi.fn(),
+  listSubscriptions: vi.fn(),
+}));
+
+vi.mock("../../hooks/useDecks", () => ({
+  loadPreconDeckMap: vi.fn(),
+  isCommanderPreconDeck: (deck: { type: string }) => deck.type === "Commander Deck",
+}));
+
+function deck(firstCard: string, commander?: string): ParsedDeck {
+  return {
+    main: [{ count: 1, name: firstCard }],
+    sideboard: [],
+    commander: commander ? [commander] : undefined,
+  };
+}
+
+function compatibility(legal: boolean): DeckCompatibilityResult {
+  return {
+    standard: { compatible: legal, reasons: [] },
+    commander: { compatible: legal, reasons: [] },
+    bo3_ready: true,
+    unknown_cards: [],
+    selected_format_compatible: legal,
+    selected_format_reasons: legal ? [] : ["Illegal"],
+    color_identity: [],
+    coverage: { total_unique: 10, supported_unique: 9, unsupported_cards: [] },
+  };
+}
+
+function saveDeck(name: string, parsed: ParsedDeck): void {
+  localStorage.setItem(STORAGE_KEY_PREFIX + name, JSON.stringify(parsed));
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  vi.mocked(listSubscriptions).mockReturnValue([]);
+  vi.mocked(getCachedFeed).mockReturnValue(null);
+  vi.mocked(loadPreconDeckMap).mockResolvedValue(null);
+  vi.mocked(evaluateDeckCompatibility).mockImplementation(async (parsed) =>
+    compatibility(parsed.main[0]?.name !== "Illegal Starter")
+  );
+  // Default: no estimate available, so untagged decks stay null. Tests that
+  // exercise the estimate fallback override this via `stubBracketEstimate`.
+  stubBracketEstimate(null);
+});
+
+describe("buildLegalAiDeckCatalog", () => {
+  it("includes legal saved Pauper Commander user decks", async () => {
+    saveDeck("PDH Legal", deck("Command Tower", "Murmuring Mystic"));
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "PauperCommander",
+      selectedMatchType: "Bo1",
+    });
+
+    expect(catalog.candidates.map((candidate) => candidate.id)).toContain("saved:PDH Legal");
+    expect(evaluateDeckCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ commander: ["Murmuring Mystic"] }),
+      { selectedFormat: "PauperCommander", selectedMatchType: "Bo1", summaryOnly: true },
+    );
+  });
+
+  it("dedupes mirrored feed decks while preserving same-name decks from distinct feeds", async () => {
+    saveDeck("Mirrored Deck", deck("Mirrored Card"));
+    localStorage.setItem(FEED_DECK_ORIGINS_KEY, JSON.stringify({ "Mirrored Deck": "feed-a" }));
+    vi.mocked(listSubscriptions).mockReturnValue([
+      { sourceId: "feed-a", url: "feed-a.json", type: "remote", subscribedAt: 0, lastRefreshedAt: 0, lastVersion: 1 },
+      { sourceId: "feed-b", url: "feed-b.json", type: "remote", subscribedAt: 0, lastRefreshedAt: 0, lastVersion: 1 },
+      { sourceId: "starter", url: "starter.json", type: "bundled", subscribedAt: 0, lastRefreshedAt: 0, lastVersion: 1 },
+    ]);
+    vi.mocked(getCachedFeed).mockImplementation((feedId) => {
+      if (feedId === "feed-a") {
+        return {
+          id: "feed-a",
+          name: "Feed A",
+          version: 1,
+          updated: "2026-05-06T00:00:00Z",
+          decks: [
+            { name: "Mirrored Deck", colors: [], main: deck("Mirrored Card").main, sideboard: [] },
+            { name: "Same Name", colors: [], main: deck("Feed A Card").main, sideboard: [] },
+          ],
+        };
+      }
+      if (feedId === "feed-b") {
+        return {
+          id: "feed-b",
+          name: "Feed B",
+          version: 1,
+          updated: "2026-05-06T00:00:00Z",
+          decks: [
+            { name: "Same Name", colors: [], main: deck("Feed B Card").main, sideboard: [] },
+          ],
+        };
+      }
+      return {
+        id: "starter",
+        name: "Starter",
+        version: 1,
+        updated: "2026-05-06T00:00:00Z",
+        decks: [
+          { name: "Illegal Starter", colors: [], main: deck("Illegal Starter").main, sideboard: [] },
+        ],
+      };
+    });
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "Standard",
+      selectedMatchType: "Bo1",
+    });
+    const ids = catalog.candidates.map((candidate) => candidate.id);
+
+    expect(ids).toContain("saved:Mirrored Deck");
+    expect(ids).not.toContain("feed:feed-a:Mirrored Deck");
+    expect(ids).toContain("feed:feed-a:Same Name");
+    expect(ids).toContain("feed:feed-b:Same Name");
+    expect(ids).not.toContain("feed:starter:Illegal Starter");
+  });
+
+  it("checks legality for same-format Starter Decks before adding them to the AI pool", async () => {
+    vi.mocked(listSubscriptions).mockReturnValue([
+      { sourceId: "starter-decks", url: "/feeds/starter-decks.json", type: "bundled", subscribedAt: 0, lastRefreshedAt: 0, lastVersion: 1 },
+    ]);
+    vi.mocked(getCachedFeed).mockReturnValue({
+      id: "starter-decks",
+      name: "Starter Decks",
+      format: "standard",
+      version: 1,
+      updated: "2026-05-06T00:00:00Z",
+      decks: [
+        { name: "Illegal Starter", colors: [], main: deck("Illegal Starter").main, sideboard: [] },
+      ],
+    });
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "Standard",
+      selectedMatchType: "Bo1",
+    });
+
+    expect(catalog.candidates.map((candidate) => candidate.id)).not.toContain(
+      "feed:starter-decks:Illegal Starter",
+    );
+    expect(evaluateDeckCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ main: [{ count: 1, name: "Illegal Starter" }] }),
+      { selectedFormat: "Standard", selectedMatchType: "Bo1", summaryOnly: true },
+    );
+  });
+
+  it("surfaces null bracket on user-saved decks without a tag", async () => {
+    saveDeck("Untagged Commander", deck("Sol Ring", "Atraxa, Praetors' Voice"));
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "Commander",
+      selectedMatchType: "Bo1",
+    });
+
+    const candidate = catalog.candidates.find((c) => c.id === "saved:Untagged Commander");
+    expect(candidate?.bracket).toBeNull();
+  });
+
+  it("surfaces the persisted bracket on user-saved decks", async () => {
+    localStorage.setItem(
+      STORAGE_KEY_PREFIX + "Tagged Commander",
+      JSON.stringify({
+        main: [{ count: 1, name: "Sol Ring" }],
+        sideboard: [],
+        commander: ["Atraxa, Praetors' Voice"],
+        bracket: 4,
+      }),
+    );
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "Commander",
+      selectedMatchType: "Bo1",
+    });
+
+    const candidate = catalog.candidates.find((c) => c.id === "saved:Tagged Commander");
+    expect(candidate?.bracket).toBe(4);
+  });
+
+  it("falls back to the engine bracket estimate for untagged Commander decks", async () => {
+    // The bug: untagged decks (feed decks, untagged precons, most saved decks)
+    // surfaced as `bracket: null` and were excluded by every bracket filter,
+    // collapsing the AI pool to "Random (0)". The fix resolves the bracket
+    // from the engine's computed estimate when no manual tag exists.
+    saveDeck("Estimated Commander", deck("Sol Ring", "Atraxa, Praetors' Voice"));
+    stubBracketEstimate({ tier: "optimized" } as BracketEstimate);
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "Commander",
+      selectedMatchType: "Bo1",
+    });
+
+    const candidate = catalog.candidates.find((c) => c.id === "saved:Estimated Commander");
+    expect(candidate?.bracket).toBe(4); // "optimized" → 4
+  });
+
+  it("prefers an explicit bracket tag over the engine estimate", async () => {
+    localStorage.setItem(
+      STORAGE_KEY_PREFIX + "Tagged Over Estimate",
+      JSON.stringify({
+        main: [{ count: 1, name: "Sol Ring" }],
+        sideboard: [],
+        commander: ["Atraxa, Praetors' Voice"],
+        bracket: 2,
+      }),
+    );
+    stubBracketEstimate({ tier: "cedh" } as BracketEstimate);
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "Commander",
+      selectedMatchType: "Bo1",
+    });
+
+    const candidate = catalog.candidates.find((c) => c.id === "saved:Tagged Over Estimate");
+    // Human-declared bracket 2 wins; the cEDH (5) estimate is not consulted.
+    expect(candidate?.bracket).toBe(2);
+  });
+
+  it("validates Commander precons through the engine's compatibility check (banned cards filtered)", async () => {
+    // CR 903 + Commander Rules Committee ban list: precons MUST be validated.
+    // WotC ships precons whose contents are later banned (Jeweled Lotus,
+    // Mana Crypt, Dockside Extortionist in 2024+) without curating the
+    // precon lists, so a precon short-circuit lets AI opponents auto-pick
+    // banned-card decks. The catalog has no rules authority — the engine does.
+    vi.mocked(loadPreconDeckMap).mockResolvedValue({
+      secrets: {
+        code: "SOS",
+        name: "Secrets of Strixhaven",
+        type: "Commander Deck",
+        coveragePct: 100,
+        mainBoard: deck("Precon Legal Card").main,
+        commander: [{ count: 1, name: "Zimone, Mystery Unraveler" }],
+      },
+      starter: {
+        code: "STD",
+        name: "Illegal Starter",
+        type: "Starter",
+        coveragePct: 100,
+        mainBoard: deck("Illegal Starter").main,
+      },
+    });
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "Commander",
+      selectedMatchType: "Bo1",
+    });
+    const ids = catalog.candidates.map((candidate) => candidate.id);
+
+    // Legal precon kept; non-Commander (`type: "Starter"`) filtered before
+    // the engine check by `isCommanderPreconDeck` in `deckCatalog`.
+    expect(ids).toContain("precon:secrets");
+    expect(ids).not.toContain("precon:starter");
+
+    // The legal precon's contents are routed through `evaluateDeckCompatibility`
+    // — proving the engine ban-list check is consulted for precons.
+    expect(evaluateDeckCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ commander: ["Zimone, Mystery Unraveler"] }),
+      { selectedFormat: "Commander", selectedMatchType: "Bo1", summaryOnly: true },
+    );
+  });
+
+  it("filters out precons that contain banned/illegal cards", async () => {
+    // Simulate a precon whose main board includes a card the engine flags
+    // as banned in the selected format. This is exactly the user-reported
+    // path: a 4-player Commander game where an AI seat would otherwise
+    // pick a precon containing a banned card.
+    vi.mocked(loadPreconDeckMap).mockResolvedValue({
+      tainted: {
+        code: "TNT",
+        name: "Tainted Precon",
+        type: "Commander Deck",
+        coveragePct: 100,
+        mainBoard: deck("Illegal Starter").main,
+        commander: [{ count: 1, name: "Some Commander" }],
+      },
+    });
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "Commander",
+      selectedMatchType: "Bo1",
+    });
+    const ids = catalog.candidates.map((candidate) => candidate.id);
+
+    expect(ids).not.toContain("precon:tainted");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bundled cEDH decks — hand-curated TS catalog, surfaced through precon path
+// ---------------------------------------------------------------------------
+
+describe("bundled cEDH decks", () => {
+  const DEMO_ID = "BundledCedh_HeliodBallista_Demo";
+  const DEMO_CATALOG_ID = `precon:${DEMO_ID}`;
+
+  it("exports the seeded Heliod + Walking Ballista demo deck", () => {
+    const entry = BUNDLED_CEDH_DECKS[DEMO_ID];
+    expect(entry).toBeDefined();
+    // isCommanderPreconDeck in deckCatalog filters non-Commander decks; the
+    // bundled type must match so the entry reaches the catalog.
+    expect(entry.type).toBe("Commander Deck");
+    expect(entry.commander?.[0]?.name).toBe("Heliod, Sun-Crowned");
+    expect(entry.mainBoard.some((c) => c.name === "Walking Ballista")).toBe(true);
+  });
+
+  it("surfaces the bundled cEDH demo deck through buildDeckCatalog", async () => {
+    // Mock returns null — proves bundled decks are surfaced independently of
+    // the MTGJSON precon catalog, which may be missing in fresh installs.
+    vi.mocked(loadPreconDeckMap).mockResolvedValue(null);
+
+    const candidates = await buildDeckCatalog({ includePrecons: true });
+    const demo = candidates.find((c) => c.id === DEMO_CATALOG_ID);
+
+    expect(demo).toBeDefined();
+    expect(demo?.source.type).toBe("precon");
+    expect(demo?.bracket).toBe(CEDH_BRACKET);
+    expect(demo?.knownFormat).toBe("Commander");
+  });
+
+  it("surfaces all bundled cEDH demo decks (multi-deck enumeration)", async () => {
+    // Regression guard for the dedup refactor: all bundled decks must be
+    // emitted by the same shared push helper. If a future change reverts
+    // the helper to per-deck duplicated logic, or accidentally skips
+    // entries past the first, this test catches it.
+    vi.mocked(loadPreconDeckMap).mockResolvedValue(null);
+
+    const candidates = await buildDeckCatalog({ includePrecons: true });
+    const heliod = candidates.find((c) => c.id === "precon:BundledCedh_HeliodBallista_Demo");
+    const inalla = candidates.find((c) => c.id === "precon:BundledCedh_InallaThoracle_Demo");
+    const winota = candidates.find((c) => c.id === "precon:BundledCedh_WinotaKikiFelidar_Demo");
+
+    expect(heliod).toBeDefined();
+    expect(inalla).toBeDefined();
+    expect(winota).toBeDefined();
+    expect(heliod?.source.type).toBe("precon");
+    expect(inalla?.source.type).toBe("precon");
+    expect(winota?.source.type).toBe("precon");
+    expect(heliod?.bracket).toBe(CEDH_BRACKET);
+    expect(inalla?.bracket).toBe(CEDH_BRACKET);
+    expect(winota?.bracket).toBe(CEDH_BRACKET);
+  });
+
+  it("filterByBracket(5) surfaces the bundled cEDH demo deck through the legal AI catalog", async () => {
+    vi.mocked(loadPreconDeckMap).mockResolvedValue(null);
+
+    const catalog = await buildLegalAiDeckCatalog({
+      selectedFormat: "Commander",
+      selectedMatchType: "Bo1",
+    });
+    const cedhOnly = filterByBracket(catalog.candidates, CEDH_BRACKET);
+
+    const demo = cedhOnly.find((c) => c.id === DEMO_CATALOG_ID);
+    expect(demo).toBeDefined();
+    expect(demo?.source.type).toBe("precon");
+    expect(demo?.bracket).toBe(CEDH_BRACKET);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// filterByBracket — pure bracket filter
+// ---------------------------------------------------------------------------
+
+function makeCandidate(id: string, bracket: AiDeckCandidate["bracket"]): AiDeckCandidate {
+  return {
+    id,
+    name: id,
+    source: { type: "precon", deckId: id, code: "TST" },
+    deck: { main: [], sideboard: [] },
+    coveragePct: null,
+    archetype: null,
+    bracket,
+  };
+}
+
+const sampleDecks: AiDeckCandidate[] = [
+  makeCandidate("casual", 2),
+  makeCandidate("optimized", 4),
+  makeCandidate("turbo", 5),
+  makeCandidate("untagged", null),
+];
+
+describe("filterByBracket", () => {
+  it("returns only bracket-5 (cEDH) candidates when tier is 5", () => {
+    const result = filterByBracket(sampleDecks, 5);
+    expect(result.map((d) => d.id)).toEqual(["turbo"]);
+  });
+
+  it("returns all candidates unchanged when tier is null", () => {
+    const result = filterByBracket(sampleDecks, null);
+    expect(result).toBe(sampleDecks); // same reference — pure no-op
+    expect(result.map((d) => d.id)).toEqual(["casual", "optimized", "turbo", "untagged"]);
+  });
+
+  it("excludes untagged candidates when a bracket tier is specified", () => {
+    const result = filterByBracket(sampleDecks, 4);
+    expect(result.map((d) => d.id)).toEqual(["optimized"]);
+    expect(result.find((d) => d.id === "untagged")).toBeUndefined();
+  });
+});

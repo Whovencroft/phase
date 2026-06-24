@@ -1,0 +1,36 @@
+---
+source: crates/engine/src/parser/oracle_ir/snapshot_tests.rs
+expression: "&ir"
+---
+{
+  "items": [
+    {
+      "PreLoweredSpell": {
+        "kind": "Activated",
+        "effect": {
+          "type": "Mana",
+          "produced": {
+            "type": "Fixed",
+            "colors": [
+              "Green"
+            ]
+          }
+        },
+        "cost": {
+          "type": "Tap"
+        },
+        "sub_ability": null,
+        "duration": null,
+        "description": "{T}: Add {G}.",
+        "target_prompt": null,
+        "condition": null,
+        "optional_targeting": false,
+        "optional": false,
+        "forward_result": false,
+        "is_mana_ability": true
+      }
+    }
+  ],
+  "source_text": "{T}: Add {G}.",
+  "card_name": "Llanowar Elves"
+}

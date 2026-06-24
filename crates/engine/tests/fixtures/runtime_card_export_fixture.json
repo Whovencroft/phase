@@ -1,0 +1,171 @@
+{
+  "forest": {
+    "name": "Forest",
+    "mana_cost": {
+      "type": "Cost",
+      "shards": [],
+      "generic": 0
+    },
+    "card_type": {
+      "supertypes": [
+        "Basic"
+      ],
+      "core_types": [
+        "Land"
+      ],
+      "subtypes": [
+        "Forest"
+      ]
+    },
+    "power": null,
+    "toughness": null,
+    "loyalty": null,
+    "defense": null,
+    "oracle_text": "({T}: Add {G}.)",
+    "non_ability_text": null,
+    "flavor_name": null,
+    "keywords": [],
+    "abilities": [
+      {
+        "kind": "Activated",
+        "effect": {
+          "type": "Mana",
+          "produced": {
+            "type": "Fixed",
+            "colors": [
+              "Green"
+            ]
+          }
+        },
+        "cost": {
+          "type": "Tap"
+        },
+        "sub_ability": null,
+        "duration": null,
+        "description": null,
+        "target_prompt": null,
+        "sorcery_speed": false,
+        "condition": null,
+        "optional_targeting": false,
+        "optional": false,
+        "forward_result": false
+      }
+    ],
+    "triggers": [],
+    "static_abilities": [],
+    "replacements": [],
+    "color_override": null,
+    "scryfall_oracle_id": "b34bb2dc-c1af-4d77-b0b3-a0fb342a5fc6",
+    "legalities": {
+      "commander": "legal",
+      "modern": "legal",
+      "pauper": "legal",
+      "pioneer": "legal",
+      "standard": "legal"
+    }
+  },
+  "lightning bolt": {
+    "name": "Lightning Bolt",
+    "mana_cost": {
+      "type": "Cost",
+      "shards": [
+        "Red"
+      ],
+      "generic": 0
+    },
+    "card_type": {
+      "supertypes": [],
+      "core_types": [
+        "Instant"
+      ],
+      "subtypes": []
+    },
+    "power": null,
+    "toughness": null,
+    "loyalty": null,
+    "defense": null,
+    "oracle_text": "Lightning Bolt deals 3 damage to any target.",
+    "non_ability_text": null,
+    "flavor_name": null,
+    "keywords": [],
+    "abilities": [
+      {
+        "kind": "Spell",
+        "effect": {
+          "type": "DealDamage",
+          "amount": {
+            "type": "Fixed",
+            "value": 3
+          },
+          "target": {
+            "type": "Any"
+          }
+        },
+        "cost": null,
+        "sub_ability": null,
+        "duration": null,
+        "description": "Lightning Bolt deals 3 damage to any target.",
+        "target_prompt": null,
+        "sorcery_speed": false,
+        "condition": null,
+        "optional_targeting": false,
+        "optional": false,
+        "forward_result": false
+      }
+    ],
+    "triggers": [],
+    "static_abilities": [],
+    "replacements": [],
+    "color_override": null,
+    "scryfall_oracle_id": "4457ed35-7c10-48c8-9776-456485fdf070",
+    "legalities": {
+      "commander": "legal",
+      "modern": "legal",
+      "pauper": "legal"
+    }
+  },
+  "grizzly bears": {
+    "name": "Grizzly Bears",
+    "mana_cost": {
+      "type": "Cost",
+      "shards": [
+        "Green"
+      ],
+      "generic": 1
+    },
+    "card_type": {
+      "supertypes": [],
+      "core_types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bear"
+      ]
+    },
+    "power": {
+      "type": "Fixed",
+      "value": 2
+    },
+    "toughness": {
+      "type": "Fixed",
+      "value": 2
+    },
+    "loyalty": null,
+    "defense": null,
+    "oracle_text": null,
+    "non_ability_text": null,
+    "flavor_name": null,
+    "keywords": [],
+    "abilities": [],
+    "triggers": [],
+    "static_abilities": [],
+    "replacements": [],
+    "color_override": null,
+    "scryfall_oracle_id": "14c8f55d-d177-4c25-a931-ebeb9e6062a0",
+    "legalities": {
+      "commander": "legal",
+      "modern": "legal",
+      "pauper": "legal"
+    }
+  }
+}

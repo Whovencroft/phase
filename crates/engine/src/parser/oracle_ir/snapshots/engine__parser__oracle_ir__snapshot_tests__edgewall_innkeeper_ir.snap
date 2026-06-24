@@ -1,0 +1,62 @@
+---
+source: crates/engine/src/parser/oracle_ir/snapshot_tests.rs
+expression: "&ir"
+---
+{
+  "items": [
+    {
+      "PreLoweredTrigger": {
+        "mode": "SpellCast",
+        "execute": {
+          "kind": "Spell",
+          "effect": {
+            "type": "Draw",
+            "count": {
+              "type": "Fixed",
+              "value": 1
+            },
+            "target": {
+              "type": "Controller"
+            }
+          },
+          "cost": null,
+          "sub_ability": null,
+          "duration": null,
+          "description": null,
+          "target_prompt": null,
+          "condition": null,
+          "optional_targeting": false,
+          "optional": false,
+          "forward_result": false
+        },
+        "valid_card": {
+          "type": "Typed",
+          "type_filters": [
+            "Creature"
+          ],
+          "controller": null,
+          "properties": []
+        },
+        "origin": null,
+        "destination": null,
+        "trigger_zones": [
+          "Battlefield"
+        ],
+        "phase": null,
+        "optional": false,
+        "damage_kind": "Any",
+        "secondary": false,
+        "valid_target": {
+          "type": "Controller"
+        },
+        "valid_source": null,
+        "description": "Whenever you cast a creature spell that has an Adventure, draw a card.",
+        "constraint": null,
+        "condition": null,
+        "batched": false
+      }
+    }
+  ],
+  "source_text": "Whenever you cast a creature spell that has an Adventure, draw a card. (It doesn't need to have gone on the adventure first.)",
+  "card_name": "Edgewall Innkeeper"
+}
