@@ -2912,6 +2912,18 @@ fn resolve_ref(
                         Some(ControllerRef::TriggeringPlayer) => {
                             triggering_event_player(state).is_some_and(|pid| pid == snap.controller)
                         }
+                        // CR 303.4b: Resolve enchanted player for quantity counting.
+                        Some(ControllerRef::EnchantedPlayer) => {
+                            crate::game::filter::controller_ref_player(
+                                state,
+                                ctx.source,
+                                Some(controller),
+                                ability,
+                                // CR 303.4b: Resolve enchanted player for quantity counting.
+                                &ControllerRef::EnchantedPlayer,
+                            )
+                            .is_some_and(|pid| pid == snap.controller)
+                        }
                     })
                     .count(),
             )
@@ -2973,6 +2985,16 @@ fn damage_source_controller_matches(
         ControllerRef::TriggeringPlayer => {
             triggering_event_player(state).is_some_and(|player| actual == player)
         }
+        // CR 303.4b: Resolve enchanted player for quantity counting.
+        ControllerRef::EnchantedPlayer => crate::game::filter::controller_ref_player(
+            state,
+            ctx.source,
+            Some(controller),
+            ability,
+            // CR 303.4b: Resolve enchanted player for quantity counting.
+            &ControllerRef::EnchantedPlayer,
+        )
+        .is_some_and(|player| actual == player),
     }
 }
 
