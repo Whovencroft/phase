@@ -18613,6 +18613,24 @@ mod tests {
         );
     }
 
+    /// CR 603.6c + CR 603.4: Synthetic test for an LTB trigger with "during an
+    /// opponent's turn" tail. Proves the opponent-turn branch maps to
+    /// `DuringPlayersTurn { player: Opponent }`.
+    #[test]
+    fn trigger_leaves_battlefield_during_opponents_turn() {
+        let def = parse_trigger_line(
+            "Whenever a creature you control leaves the battlefield during an opponent's turn, draw a card.",
+            "Synthetic Opponent Turn LTB",
+        );
+        assert_eq!(def.mode, TriggerMode::LeavesBattlefield);
+        assert_eq!(
+            def.condition,
+            Some(TriggerCondition::DuringPlayersTurn {
+                player: PlayerFilter::Opponent,
+            }),
+            "during an opponent's turn must become DuringPlayersTurn with Opponent"
+        );
+    }
     /// CR 603.6c: "Whenever a permanent is returned to a player's hand" — Warped Devotion.
     #[test]
     fn trigger_returned_to_a_players_hand() {
