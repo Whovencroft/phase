@@ -7609,12 +7609,13 @@ fn try_parse_event(
     .map(|(tail, _)| tail);
     if let Some(tail) = leaves_tail {
         let tail = tail.trim_start();
-        // CR 603.2c + CR 603.6d: Strip trailing "during your turn" constraint
-        // before checking for "without dying" or bare tail. This supports
-        // Oni-Cult Anvil ("one or more artifacts you control leave the
-        // battlefield during your turn") and Suki, Courageous Rescuer
-        // ("another permanent you control leaves the battlefield during your
-        // turn").
+        // CR 603.6c + CR 603.4: Strip trailing "during your turn" condition
+        // before checking for "without dying" or bare tail. CR 603.6c governs
+        // leave-the-battlefield triggers; CR 603.4 governs the intervening-if
+        // turn condition. This supports Oni-Cult Anvil ("one or more artifacts
+        // you control leave the battlefield during your turn") and Suki,
+        // Courageous Rescuer ("another permanent you control leaves the
+        // battlefield during your turn").
         let (tail, turn_constraint) = peel_trailing_turn_constraint(tail);
         let during_your_turn =
             matches!(turn_constraint, Some(TriggerConstraint::OnlyDuringYourTurn));
@@ -18545,10 +18546,11 @@ mod tests {
         );
     }
 
-    /// CR 603.2c + CR 603.6d: Batched "one or more artifacts you control leave the
-    /// battlefield during your turn" — Oni-Cult Anvil. The "during your turn" tail
-    /// becomes a DuringPlayersTurn condition; the trailing "only once each turn"
-    /// becomes an OncePerTurn constraint.
+    /// CR 603.2c + CR 603.6c: Batched "one or more artifacts you control leave the
+    /// battlefield during your turn" — Oni-Cult Anvil. CR 603.2c covers the
+    /// batched (one-or-more) trigger; CR 603.6c covers the LTB event; CR 603.4
+    /// covers the "during your turn" intervening-if condition. The trailing
+    /// "only once each turn" becomes an OncePerTurn constraint.
     #[test]
     fn trigger_one_or_more_artifacts_leave_battlefield_during_your_turn() {
         let def = parse_trigger_line(
@@ -18575,10 +18577,11 @@ mod tests {
         );
     }
 
-    /// CR 603.6d: Singular "another permanent you control leaves the battlefield
-    /// during your turn" — Suki, Courageous Rescuer. Non-batched form with
-    /// "during your turn" as a DuringPlayersTurn condition and the trailing
-    /// "only once each turn" as an OncePerTurn constraint.
+    /// CR 603.6c + CR 603.4: Singular "another permanent you control leaves the
+    /// battlefield during your turn" — Suki, Courageous Rescuer. CR 603.6c
+    /// covers the LTB event; CR 603.4 covers the "during your turn"
+    /// intervening-if condition. The trailing "only once each turn" becomes an
+    /// OncePerTurn constraint.
     #[test]
     fn trigger_another_permanent_leaves_battlefield_during_your_turn() {
         let def = parse_trigger_line(
