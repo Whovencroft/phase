@@ -2490,8 +2490,7 @@ pub(crate) fn parse_creature_subject_filter(subject: &str) -> Option<TargetFilte
     // optional controller suffix. Delegates to the shared nom grammar
     // (`nom_filter::parse_zone_controller`) so all controller phrases are
     // maintained in a single authority.
-    let (subject_core, controller) =
-        strip_subject_controller_suffix(tp.original, &lower);
+    let (subject_core, controller) = strip_subject_controller_suffix(tp.original, &lower);
 
     let subject_core_lower = subject_core.to_lowercase();
     let subject_core_tp = TextPair::new(subject_core, &subject_core_lower);
