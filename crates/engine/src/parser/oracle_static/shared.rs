@@ -2429,27 +2429,62 @@ pub(crate) fn descriptor_is_supertype(descriptor: &str) -> bool {
     is_supertype
 }
 
+/// Nom-backed helper: split a subject string into (descriptor_core, controller)
+/// by trying to parse a trailing controller suffix via the shared
+/// `nom_filter::parse_zone_controller` grammar. Returns the original-case
+/// descriptor prefix and `Some(ControllerRef)` on match, or the full original
+/// text and `None` if no suffix matches.
+///
+/// This keeps the controller-phrase grammar in a single authority
+/// (`oracle_nom::filter::parse_zone_controller`) rather than duplicating
+/// verbatim suffix strings in the static parser.
+fn strip_subject_controller_suffix<'a>(
+    original: &'a str,
+    lower: &str,
+) -> (&'a str, Option<ControllerRef>) {
+    // The controller suffix is always preceded by a space. Walk backwards
+    // through each space-delimited split point and try the nom grammar on the
+    // trailing portion.
+    for (byte_idx, _) in lower.rmatch_indices(' ') {
+        let suffix_lower = &lower[byte_idx + 1..];
+        if let Ok((rest, ctrl)) = nom_filter::parse_zone_controller(suffix_lower) {
+            if rest.is_empty() {
+                return (original[..byte_idx].trim(), Some(ctrl));
+            }
+        }
+        // Some controller phrases are multi-word ("your opponents control",
+        // "enchanted player controls"). Try from the space INCLUDING the
+        // leading space character stripped (the tag in parse_zone_controller
+        // does NOT expect a leading space).
+    }
+    // Two-pass: also try from each space where the suffix is TWO or more words.
+    // parse_zone_controller expects the full phrase without leading space, so
+    // we try substrings starting after each space.
+    let mut start = 0;
+    while let Some(pos) = lower[start..].find(' ') {
+        let abs_pos = start + pos;
+        let suffix_lower = &lower[abs_pos + 1..];
+        if let Ok((rest, ctrl)) = nom_filter::parse_zone_controller(suffix_lower) {
+            if rest.is_empty() {
+                return (original[..abs_pos].trim(), Some(ctrl));
+            }
+        }
+        start = abs_pos + 1;
+    }
+    (original, None)
+}
+
 pub(crate) fn parse_creature_subject_filter(subject: &str) -> Option<TargetFilter> {
     let trimmed = subject.trim();
     let lower = trimmed.to_lowercase();
     let tp = TextPair::new(trimmed, &lower);
 
-    // allow-noncombinator: moved legacy static parser code; refactor-only split preserves behavior.
-    let (subject_core, controller) = if let Some(prefix) = tp.original.strip_suffix(" you control")
-    // allow-noncombinator: moved legacy static parser code; refactor-only split preserves behavior.
-    {
-        (prefix.trim(), Some(ControllerRef::You))
-    // allow-noncombinator: moved legacy static parser code; refactor-only split preserves behavior.
-    } else if let Some(prefix) = tp.original.strip_suffix(" your opponents control") {
-        // allow-noncombinator: moved legacy static parser code; refactor-only split preserves behavior.
-        (prefix.trim(), Some(ControllerRef::Opponent))
-    // allow-noncombinator: extending grandfathered controller-suffix block (same pattern as existing arms).
-    } else if let Some(prefix) = tp.original.strip_suffix(" enchanted player controls") {
-        // CR 303.4b: "enchanted player" refers to the player the source Aura is attached to.
-        (prefix.trim(), Some(ControllerRef::EnchantedPlayer))
-    } else {
-        (tp.original, None)
-    };
+    // CR 109.5 + CR 303.4b: Split the subject into a descriptor core and an
+    // optional controller suffix. Delegates to the shared nom grammar
+    // (`nom_filter::parse_zone_controller`) so all controller phrases are
+    // maintained in a single authority.
+    let (subject_core, controller) =
+        strip_subject_controller_suffix(tp.original, &lower);
 
     let subject_core_lower = subject_core.to_lowercase();
     let subject_core_tp = TextPair::new(subject_core, &subject_core_lower);
