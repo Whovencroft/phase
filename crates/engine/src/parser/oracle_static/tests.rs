@@ -20305,8 +20305,7 @@ fn static_creatures_enchanted_player_controls_get_minus_1_minus_1() {
     // scoped to the enchanted player's creatures. The subject "Creatures
     // enchanted player controls" must parse into a creature TypedFilter with
     // `ControllerRef::EnchantedPlayer`.
-    let def =
-        parse_static_line("Creatures enchanted player controls get -1/-1.").unwrap();
+    let def = parse_static_line("Creatures enchanted player controls get -1/-1.").unwrap();
     assert_eq!(def.mode, StaticMode::Continuous);
     assert!(matches!(
         def.affected,

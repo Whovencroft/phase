@@ -41,8 +41,13 @@ fn curse_of_deaths_hold_debuffs_enchanted_players_creatures() {
 
     // Create the curse as an enchantment on the battlefield under P0's control.
     let curse = {
-        let mut builder =
-            scenario.add_creature_from_oracle(P0, "Curse of Death's Hold", 0, 0, CURSE_OF_DEATHS_HOLD);
+        let mut builder = scenario.add_creature_from_oracle(
+            P0,
+            "Curse of Death's Hold",
+            0,
+            0,
+            CURSE_OF_DEATHS_HOLD,
+        );
         builder.as_enchantment();
         builder.with_subtypes(vec!["Aura", "Curse"]);
         builder.id()
@@ -81,8 +86,13 @@ fn curse_of_deaths_hold_debuff_turns_off_when_source_leaves() {
     scenario.at_phase(Phase::PreCombatMain);
 
     let curse = {
-        let mut builder =
-            scenario.add_creature_from_oracle(P0, "Curse of Death's Hold", 0, 0, CURSE_OF_DEATHS_HOLD);
+        let mut builder = scenario.add_creature_from_oracle(
+            P0,
+            "Curse of Death's Hold",
+            0,
+            0,
+            CURSE_OF_DEATHS_HOLD,
+        );
         builder.as_enchantment();
         builder.with_subtypes(vec!["Aura", "Curse"]);
         builder.id()
