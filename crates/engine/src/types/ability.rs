@@ -4596,6 +4596,13 @@ pub enum ObjectProperty {
     Power,
     Toughness,
     ManaValue,
+    /// CR 107.4a + CR 202.1: The number of colored mana symbols of `color` in
+    /// this object's mana cost. Summed (via `QuantityRef::Aggregate`) over a
+    /// zone-scoped filter, this expresses chroma in any zone — "the number of
+    /// black mana symbols in the mana costs of cards in your graveyard" (Umbra
+    /// Stalker) is `Sum` of `ManaSymbolCount(Black)` over cards in your
+    /// graveyard. Hybrid symbols count for each of their colors (CR 107.4e).
+    ManaSymbolCount(ManaColor),
 }
 
 /// CR 701.13a + CR 608.2c: Termination predicate for an iterative exile-from-top
@@ -7626,6 +7633,25 @@ pub enum PerpetualModification {
     SetBasePowerToughness { power: i32, toughness: i32 },
 }
 
+/// CR 701.20e + CR 608.2c: Discriminates where `Effect::Dig` reads its
+/// card set from. `Library` (the default) reads from the top of the library;
+/// `PriorLook` reads from `GameState::private_look_ids`, which was populated
+/// by a preceding look-only Dig (e.g. the Birthing Ritual pattern: look →
+/// sacrifice → choose from among those cards).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DigSource {
+    #[default]
+    Library,
+    PriorLook,
+}
+
+impl DigSource {
+    pub fn is_library(&self) -> bool {
+        matches!(self, DigSource::Library)
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
 #[serde(tag = "type")]
@@ -8098,6 +8124,9 @@ pub enum Effect {
         /// tapped when true (Planar Genesis — "onto the battlefield tapped").
         #[serde(default)]
         enter_tapped: bool,
+        /// Determines where the resolver reads the card set from. See [`DigSource`].
+        #[serde(default, skip_serializing_if = "DigSource::is_library")]
+        source: DigSource,
     },
     GainControl {
         #[serde(default = "default_target_filter_any")]
@@ -9028,7 +9057,7 @@ pub enum Effect {
     },
     /// CR 701.50a: Target creature connives (draw a card, then discard a card;
     /// if a nonland card is discarded, put a +1/+1 counter on it).
-    /// CR 701.50e: "Connive N" draws N, discards N, counters per nonland.
+    /// CR 701.50d: "Connive N" draws N, discards N, counters per nonland.
     /// `count` is a `QuantityExpr` so dynamic bindings (e.g. Spymaster's Vault's
     /// "connives X, where X is the number of creatures that died this turn") resolve
     /// at activation time via `resolve_quantity_with_targets`.
@@ -12883,7 +12912,8 @@ pub enum AbilityTag {
     Cycling,
     /// CR 702.165a: ability originated from a Backup keyword definition.
     Backup,
-    /// CR 602.5b + CR 602.1: This ability originated from a Power-up keyword definition.
+    /// CR 702.193a: This ability originated from a Power-up keyword definition (a
+    /// keyword-labeled activated ability, like Exhaust, per CR 602.5b + CR 602.1).
     PowerUp,
     /// CR 702.6a: This ability originated from an Equip keyword definition.
     Equip,

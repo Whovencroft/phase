@@ -1797,12 +1797,22 @@ fn resolve_ref(
                     ObjectProperty::ManaValue => Some(u32_to_i32_saturating(
                         obj.mana_cost.mana_value_with_x(obj.zone, obj.cost_x_paid),
                     )),
+                    // CR 107.4a + CR 107.4e + CR 202.1: count colored mana symbols
+                    // of `color` in the object's printed cost; hybrid symbols
+                    // contribute to each of their colors. Always defined (0 when
+                    // the object has no mana cost), so no LKI fallback is needed.
+                    ObjectProperty::ManaSymbolCount(color) => Some(u32_to_i32_saturating(
+                        crate::game::devotion::count_cost_color_symbols(&obj.mana_cost, *color),
+                    )),
                 });
                 live.or_else(|| {
                     state.lki_cache.get(&id).and_then(|lki| match property {
                         ObjectProperty::Power => lki.power,
                         ObjectProperty::Toughness => lki.toughness,
                         ObjectProperty::ManaValue => Some(u32_to_i32_saturating(lki.mana_value)),
+                        // The live cost is authoritative for symbol counting; the
+                        // LKI snapshot does not retain individual shards.
+                        ObjectProperty::ManaSymbolCount(_) => None,
                     })
                 })
             };
@@ -2177,12 +2187,17 @@ fn resolve_ref(
                     ObjectProperty::ManaValue => Some(u32_to_i32_saturating(
                         obj.mana_cost.mana_value_with_x(obj.zone, obj.cost_x_paid),
                     )),
+                    // CR 107.4a + CR 202.1: colored mana symbols of `color`.
+                    ObjectProperty::ManaSymbolCount(color) => Some(u32_to_i32_saturating(
+                        crate::game::devotion::count_cost_color_symbols(&obj.mana_cost, *color),
+                    )),
                 });
                 live.or_else(|| {
                     state.lki_cache.get(&id).and_then(|lki| match property {
                         ObjectProperty::Power => lki.power,
                         ObjectProperty::Toughness => lki.toughness,
                         ObjectProperty::ManaValue => Some(u32_to_i32_saturating(lki.mana_value)),
+                        ObjectProperty::ManaSymbolCount(_) => None,
                     })
                 })
             };
@@ -2609,6 +2624,9 @@ fn resolve_ref(
                     ObjectProperty::Power => record.power,
                     ObjectProperty::Toughness => record.toughness,
                     ObjectProperty::ManaValue => Some(u32_to_i32_saturating(record.mana_value)),
+                    // Damage records do not retain the source's individual mana
+                    // symbols; symbol-count aggregation is not defined over them.
+                    ObjectProperty::ManaSymbolCount(_) => None,
                 });
             match function {
                 AggregateFunction::Max => vals.max().unwrap_or(0),
@@ -5009,6 +5027,147 @@ mod tests {
 
         assert_eq!(resolve_quantity(&state, &qty, PlayerId(0), artifact), 1);
         assert_eq!(resolve_quantity(&state, &qty, PlayerId(1), creature), 0);
+    }
+
+    /// CR 107.4a + CR 202.1: graveyard-scope chroma (Umbra Stalker) resolves
+    /// through the zone-general `Aggregate` / `ObjectProperty::ManaSymbolCount`
+    /// building block — `Sum` of black mana symbols over cards in YOUR
+    /// graveyard. Verifies zone scoping (battlefield excluded), owner scoping
+    /// (opponent's graveyard excluded), and controller-relative `You` binding.
+    #[test]
+    fn resolve_aggregate_mana_symbol_count_over_graveyard() {
+        use crate::types::ability::{AggregateFunction, ControllerRef, FilterProp, ObjectProperty};
+        use crate::types::mana::{ManaColor, ManaCost, ManaCostShard};
+        let mut state = GameState::new_two_player(42);
+        // P0 graveyard: {B}{B} and {B}{U} → 3 black symbols total.
+        for (cid, shards) in [
+            (CardId(1), vec![ManaCostShard::Black, ManaCostShard::Black]),
+            (CardId(2), vec![ManaCostShard::Black, ManaCostShard::Blue]),
+        ] {
+            let id = create_object(
+                &mut state,
+                cid,
+                PlayerId(0),
+                "Gy".to_string(),
+                Zone::Graveyard,
+            );
+            state.objects.get_mut(&id).unwrap().mana_cost = ManaCost::Cost { shards, generic: 0 };
+        }
+        // P0 battlefield {B} — wrong zone, must not count.
+        let bf = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(0),
+            "Bf".to_string(),
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(&bf).unwrap().mana_cost = ManaCost::Cost {
+            shards: vec![ManaCostShard::Black],
+            generic: 0,
+        };
+        // Opponent (P1) graveyard {B}{B} — wrong owner relative to P0.
+        let opp = create_object(
+            &mut state,
+            CardId(4),
+            PlayerId(1),
+            "Opp".to_string(),
+            Zone::Graveyard,
+        );
+        state.objects.get_mut(&opp).unwrap().mana_cost = ManaCost::Cost {
+            shards: vec![ManaCostShard::Black, ManaCostShard::Black],
+            generic: 0,
+        };
+
+        let qty = QuantityExpr::Ref {
+            qty: QuantityRef::Aggregate {
+                function: AggregateFunction::Sum,
+                property: ObjectProperty::ManaSymbolCount(ManaColor::Black),
+                filter: TargetFilter::Typed(TypedFilter::card().properties(vec![
+                    FilterProp::Owned {
+                        controller: ControllerRef::You,
+                    },
+                    FilterProp::InZone {
+                        zone: Zone::Graveyard,
+                    },
+                ])),
+            },
+        };
+
+        // P0 sees 3 black symbols in their own graveyard (battlefield + P1's
+        // graveyard excluded); P1 sees only their own 2.
+        assert_eq!(resolve_quantity(&state, &qty, PlayerId(0), bf), 3);
+        assert_eq!(resolve_quantity(&state, &qty, PlayerId(1), opp), 2);
+    }
+
+    /// CR 404.2 + CR 109.4: graveyard-scope chroma must scope its population by
+    /// OWNER, not by the at-departure (LKI) controller. A card in YOUR graveyard
+    /// is one you own; the controller it had before leaving the battlefield is
+    /// irrelevant. Regression for the review on #4075: the prior `controller(You)`
+    /// filter read `effective_controller`, which falls back to the at-departure
+    /// controller for off-battlefield objects, so a card you own but an opponent
+    /// last controlled would be miscounted (dropped for the owner, double-counted
+    /// for the opponent). `Owned { You }` reads ownership and is LKI-independent.
+    #[test]
+    fn resolve_aggregate_mana_symbol_count_scopes_by_owner_not_lki_controller() {
+        use crate::types::ability::{AggregateFunction, ControllerRef, FilterProp, ObjectProperty};
+        use crate::types::mana::{ManaColor, ManaCost, ManaCostShard};
+        let mut state = GameState::new_two_player(42);
+        // A {B}{B} card in P0's graveyard that P0 OWNS but whose last controller
+        // was the opponent P1 (e.g. it died after being stolen, or was milled
+        // from P0's library while under P1's control). Off the battlefield it has
+        // no live controller; the at-departure controller is what an LKI-reading
+        // filter would see — here, P1.
+        let stolen = create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Reclaimed".to_string(),
+            Zone::Graveyard,
+        );
+        {
+            let obj = state.objects.get_mut(&stolen).unwrap();
+            obj.mana_cost = ManaCost::Cost {
+                shards: vec![ManaCostShard::Black, ManaCostShard::Black],
+                generic: 0,
+            };
+            // Diverge the controller from the owner: P1 last controlled it.
+            obj.controller = PlayerId(1);
+        }
+        // A reference object on the battlefield to anchor each player's resolve.
+        let p0_ref = create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Ref0".to_string(),
+            Zone::Battlefield,
+        );
+        let p1_ref = create_object(
+            &mut state,
+            CardId(3),
+            PlayerId(1),
+            "Ref1".to_string(),
+            Zone::Battlefield,
+        );
+
+        let qty = QuantityExpr::Ref {
+            qty: QuantityRef::Aggregate {
+                function: AggregateFunction::Sum,
+                property: ObjectProperty::ManaSymbolCount(ManaColor::Black),
+                filter: TargetFilter::Typed(TypedFilter::card().properties(vec![
+                    FilterProp::Owned {
+                        controller: ControllerRef::You,
+                    },
+                    FilterProp::InZone {
+                        zone: Zone::Graveyard,
+                    },
+                ])),
+            },
+        };
+
+        // The card is counted for its OWNER (P0), not for the player who last
+        // controlled it (P1) — owner scoping is independent of LKI controller.
+        assert_eq!(resolve_quantity(&state, &qty, PlayerId(0), p0_ref), 2);
+        assert_eq!(resolve_quantity(&state, &qty, PlayerId(1), p1_ref), 0);
     }
 
     /// CR 202.2 + CR 601.2h: GitHub #307 — Painful Truths bug regression.

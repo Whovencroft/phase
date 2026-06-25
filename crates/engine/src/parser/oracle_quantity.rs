@@ -3701,6 +3701,40 @@ mod tests {
         }
     }
 
+    /// CR 107.4a + CR 202.1: graveyard-scope Chroma CDA — Umbra Stalker's "the
+    /// number of black mana symbols in the mana costs of cards in your
+    /// graveyard" routes through `parse_cda_quantity` as a `Sum` over the
+    /// per-card `ManaSymbolCount` of cards in your graveyard (the zone-general
+    /// `Aggregate` building block), not a graveyard-specific `QuantityRef` leaf.
+    #[test]
+    fn parse_cda_quantity_graveyard_chroma() {
+        use crate::types::ability::{
+            AggregateFunction, ControllerRef, FilterProp, ObjectProperty, TargetFilter, TypedFilter,
+        };
+        use crate::types::zones::Zone;
+        let expr = parse_cda_quantity(
+            "the number of black mana symbols in the mana costs of cards in your graveyard",
+        )
+        .expect("should parse graveyard chroma");
+        assert_eq!(
+            expr,
+            QuantityExpr::Ref {
+                qty: QuantityRef::Aggregate {
+                    function: AggregateFunction::Sum,
+                    property: ObjectProperty::ManaSymbolCount(ManaColor::Black),
+                    filter: TargetFilter::Typed(TypedFilter::card().properties(vec![
+                        FilterProp::Owned {
+                            controller: ControllerRef::You,
+                        },
+                        FilterProp::InZone {
+                            zone: Zone::Graveyard,
+                        },
+                    ])),
+                },
+            }
+        );
+    }
+
     #[test]
     fn parse_cda_quantity_permanents_sacrificed_this_turn() {
         let expr = parse_cda_quantity("the number of permanents you've sacrificed this turn")

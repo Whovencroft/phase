@@ -641,6 +641,7 @@ pub fn parse_quantity_ref(input: &str) -> OracleResult<'_, QuantityRef> {
         |i| parse_basic_land_types_among_lands_controlled_by_ref(i, ControllerRef::TargetPlayer),
         parse_devotion_ref,
         parse_chroma_devotion_ref,
+        parse_graveyard_chroma_ref,
         parse_counters_among_ref,
         // CR 402.1: "the player with the {most|fewest} cards in hand" — the
         // cross-player hand-size extremum, the hand-zone peer of the life
@@ -2345,6 +2346,9 @@ fn parse_cost_paid_object_ref(input: &str) -> OracleResult<'_, QuantityRef> {
         ObjectProperty::ManaValue => QuantityRef::ObjectManaValue {
             scope: ObjectScope::CostPaidObject,
         },
+        // ManaSymbolCount is produced only via `QuantityRef::Aggregate`, never
+        // as a single cost-paid-object reference.
+        ObjectProperty::ManaSymbolCount(_) => return Err(oracle_err(input)),
     };
     Ok((rest, qty))
 }
@@ -2407,8 +2411,11 @@ fn parse_cost_paid_object_chosen_revealed_ref(input: &str) -> OracleResult<'_, Q
         ObjectProperty::Toughness => QuantityRef::Toughness {
             scope: ObjectScope::CostPaidObject,
         },
-        // The leading `alt` only emits Power/Toughness; ManaValue is unreachable.
-        ObjectProperty::ManaValue => return Err(oracle_err(input)),
+        // The leading `alt` only emits Power/Toughness; ManaValue and
+        // ManaSymbolCount are unreachable here.
+        ObjectProperty::ManaValue | ObjectProperty::ManaSymbolCount(_) => {
+            return Err(oracle_err(input))
+        }
     };
     Ok((rest, qty))
 }
@@ -2502,7 +2509,7 @@ fn parse_anaphoric_target_card_property_ref(input: &str) -> OracleResult<'_, Qua
         ObjectProperty::ManaValue => QuantityRef::ObjectManaValue {
             scope: ObjectScope::Target,
         },
-        ObjectProperty::Power | ObjectProperty::Toughness => {
+        ObjectProperty::Power | ObjectProperty::Toughness | ObjectProperty::ManaSymbolCount(_) => {
             return Err(nom::Err::Error(OracleError::new(
                 input,
                 nom::error::ErrorKind::Tag,
@@ -2718,6 +2725,46 @@ fn parse_chroma_devotion_ref(input: &str) -> OracleResult<'_, QuantityRef> {
         rest,
         QuantityRef::Devotion {
             colors: DevotionColors::Fixed(vec![color]),
+        },
+    ))
+}
+
+/// CR 202.1 + CR 404.2: Graveyard-scope Chroma — "the number of \<color\> mana symbols in
+/// the mana costs of cards in your graveyard" counts colored mana symbols among
+/// cards in the owner's graveyard. Distinct from the permanents-scope
+/// Chroma (devotion, CR 700.5).
+fn parse_graveyard_chroma_ref(input: &str) -> OracleResult<'_, QuantityRef> {
+    let (rest, _) = tag("the number of ").parse(input)?;
+    let (rest, color) = super::primitives::parse_color(rest)?;
+    let (rest, _) =
+        tag(" mana symbols in the mana costs of cards in your graveyard").parse(rest)?;
+    // CR 107.4a + CR 202.1: graveyard-scope chroma is the SUM of per-card
+    // colored-mana-symbol counts over cards in your graveyard — expressed via the
+    // zone-general `Aggregate` / `ObjectProperty::ManaSymbolCount` building block
+    // rather than a graveyard-specific `QuantityRef` leaf. The `InZone { Graveyard }`
+    // filter makes `Aggregate` scan the graveyard.
+    //
+    // CR 404.2: a graveyard is a zone owned by a single player; "your graveyard" is
+    // the graveyard you own. Scope the population with `Owned { You }` (matches by
+    // owner) rather than `.controller(You)`: a card in a graveyard is neither on the
+    // stack nor the battlefield, so the controller filter reads the at-departure
+    // controller via LKI (CR 109.4), which can diverge from ownership (e.g. a card
+    // you owned but an opponent controlled before it died into your graveyard, or
+    // one you controlled before it left for theirs). Ownership is the correct,
+    // LKI-independent axis here.
+    Ok((
+        rest,
+        QuantityRef::Aggregate {
+            function: AggregateFunction::Sum,
+            property: ObjectProperty::ManaSymbolCount(color),
+            filter: TargetFilter::Typed(TypedFilter::card().properties(vec![
+                FilterProp::Owned {
+                    controller: ControllerRef::You,
+                },
+                FilterProp::InZone {
+                    zone: Zone::Graveyard,
+                },
+            ])),
         },
     ))
 }
@@ -7235,6 +7282,32 @@ mod tests {
             q,
             QuantityRef::Devotion {
                 colors: DevotionColors::ChosenColor
+            }
+        );
+        assert_eq!(rest, "");
+    }
+
+    /// CR 202.1 + CR 404.2: graveyard-scope Chroma — "the number of <color> mana symbols in
+    /// the mana costs of cards in your graveyard" (Umbra Stalker).
+    #[test]
+    fn test_parse_graveyard_chroma() {
+        let (rest, q) = parse_quantity_ref(
+            "the number of black mana symbols in the mana costs of cards in your graveyard",
+        )
+        .unwrap();
+        assert_eq!(
+            q,
+            QuantityRef::Aggregate {
+                function: AggregateFunction::Sum,
+                property: ObjectProperty::ManaSymbolCount(ManaColor::Black),
+                filter: TargetFilter::Typed(TypedFilter::card().properties(vec![
+                    FilterProp::Owned {
+                        controller: ControllerRef::You,
+                    },
+                    FilterProp::InZone {
+                        zone: Zone::Graveyard,
+                    },
+                ])),
             }
         );
         assert_eq!(rest, "");

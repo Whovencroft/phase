@@ -1959,6 +1959,28 @@ fn parse_unless_life_cost(rest: &str) -> Option<AbilityCost> {
 
 fn parse_unless_discard_cost(discard_tail: &str) -> Option<AbilityCost> {
     let trailing = discard_tail.trim().trim_end_matches('.').trim();
+
+    // CR 118.12 + CR 701.9: Try numeric count first ("two cards", "three cards"),
+    // then fall back to article form ("a card", "an enchantment card").
+    if let Some((n, after_num)) = parse_number(trailing) {
+        let after_num = after_num.trim();
+        if let Ok((rest, _)) = tag::<_, _, OracleError<'_>>("cards").parse(after_num) {
+            let rest = rest.trim().trim_end_matches('.').trim();
+            if rest.is_empty()
+                || tag::<_, _, OracleError<'_>>("at random")
+                    .parse(rest)
+                    .is_ok()
+            {
+                return Some(AbilityCost::Discard {
+                    count: QuantityExpr::Fixed { value: n as i32 },
+                    filter: None,
+                    selection: crate::types::ability::CardSelectionMode::Chosen,
+                    self_scope: crate::types::ability::DiscardSelfScope::FromHand,
+                });
+            }
+        }
+    }
+
     let trailing = alt((
         tag::<_, _, OracleError<'_>>("a "),
         tag::<_, _, OracleError<'_>>("an "),
@@ -2000,9 +2022,11 @@ fn parse_unless_discard_cost(discard_tail: &str) -> Option<AbilityCost> {
 /// text immediately after `" unless "`.
 ///
 /// Patterns recognized:
-/// - `you discard a card[ at random][.]`     → `UnlessCost::DiscardCard`
-/// - `you sacrifice [N] [filter][.]`         → `UnlessCost::Sacrifice { count, filter }`
-/// - `you pay N life[.]`                     → `UnlessCost::PayLife { amount }`
+/// - `you discard [N] card(s)[ at random][.]` → `AbilityCost::Discard { count, .. }`
+/// - `you sacrifice [N] [filter][.]`          → `AbilityCost::Sacrifice { count, filter }`
+/// - `you pay N life[.]`                      → `AbilityCost::PayLife { amount }`
+/// - `you mill [N] card(s)[.]`  → `AbilityCost::Mill { count }`
+/// - `you remove [N] [type] counter(s) from [target][.]` → `AbilityCost::RemoveCounter`
 ///
 /// Returns `None` for any other shape (mana costs and unknown forms fall
 /// through to the existing mana-cost path in `extract_unless_pay_modifier`).
@@ -2076,6 +2100,23 @@ fn parse_unless_alt_cost(after_unless: &str) -> Option<AbilityCost> {
         }
     }
 
+    // CR 118.12 + CR 701.17: "you mill [N] cards" — mill as unless cost.
+    // Cards: Deep Spawn.
+    if let Ok((rest, _)) = tag::<_, _, OracleError<'_>>("you mill ").parse(after_unless) {
+        if let Some(cost) = parse_unless_mill_cost(rest) {
+            return Some(cost);
+        }
+    }
+
+    // CR 118.12 + CR 122.1: "you remove [N] [type] counter(s) from [target]"
+    // — remove counter(s) as unless cost. Cards: Chisei, Junk Golem, Magmatic
+    // Sprinter.
+    if let Ok((rest, _)) = tag::<_, _, OracleError<'_>>("you remove ").parse(after_unless) {
+        if let Some(cost) = parse_unless_remove_counter_cost(rest) {
+            return Some(cost);
+        }
+    }
+
     None
 }
 
@@ -2099,6 +2140,113 @@ fn parse_unless_exile_cost(rest: &str) -> Option<AbilityCost> {
         count,
         zone: filter.extract_in_zone(),
         filter: Some(filter),
+    })
+}
+
+/// CR 118.12 + CR 701.17: Parse the tail of "you mill ..." unless costs.
+/// Expects "[N] card(s)" after the "you mill " prefix. Cards: Deep Spawn.
+fn parse_unless_mill_cost(rest: &str) -> Option<AbilityCost> {
+    let trimmed = rest.trim().trim_end_matches('.').trim();
+    let (count, after) = parse_number(trimmed)?;
+    let after = after.trim();
+    if tag::<_, _, OracleError<'_>>("cards").parse(after).is_ok()
+        || tag::<_, _, OracleError<'_>>("card").parse(after).is_ok()
+    {
+        return Some(AbilityCost::Mill { count });
+    }
+    None
+}
+
+/// CR 118.12 + CR 122.1: Parse the tail of "you remove ..." unless costs.
+/// Expects "[N] [counter_type] counter(s) from [target]".
+///
+/// - "a counter from a permanent you control" → `CounterMatch::Any`
+/// - "a +1/+1 counter from it" → `CounterMatch::OfType(Plus1Plus1)`, `SelfRef`
+/// - "two oil counters from it" → count 2, `CounterMatch::OfType(Oil)`, `SelfRef`
+///
+/// Cards: Chisei Heart of Oceans, Junk Golem, Magmatic Sprinter.
+fn parse_unless_remove_counter_cost(rest: &str) -> Option<AbilityCost> {
+    use crate::types::ability::CounterCostSelection;
+    use crate::types::counter::CounterMatch;
+
+    let trimmed = rest.trim().trim_end_matches('.').trim();
+
+    // Parse count: numeric word ("two") or article ("a"/"an" → 1).
+    let (count, after_count) = if let Some((n, after)) = parse_number(trimmed) {
+        (n, after.trim())
+    } else {
+        let after = alt((
+            tag::<_, _, OracleError<'_>>("a "),
+            tag::<_, _, OracleError<'_>>("an "),
+        ))
+        .parse(trimmed)
+        .map(|(rest, _)| rest)
+        .ok()?;
+        (1u32, after.trim())
+    };
+
+    // Parse counter type. Try bare "counter(s) from" first (→ CounterMatch::Any),
+    // because `parse_counter_type_typed` has a catch-all fallback that would
+    // consume "counter" as `CounterType::Generic("counter")`. Only after the
+    // bare-noun path fails do we try the typed combinator for "+1/+1 counter",
+    // "oil counters", etc.
+    let (counter_type, after_counter) = if let Ok((after, _)) = alt((
+        tag::<_, _, OracleError<'_>>("counters"),
+        tag::<_, _, OracleError<'_>>("counter"),
+    ))
+    .parse(after_count)
+    {
+        // Bare "counter"/"counters" without a type word → Any.
+        (CounterMatch::Any, after.trim())
+    } else if let Ok((after, ct)) = nom_primitives::parse_counter_type_typed(after_count) {
+        // Typed counter: consume trailing " counter" / " counters" suffix.
+        let after = after.trim();
+        let after = alt((
+            tag::<_, _, OracleError<'_>>("counters"),
+            tag::<_, _, OracleError<'_>>("counter"),
+        ))
+        .parse(after)
+        .map(|(rest, _)| rest)
+        .unwrap_or(after);
+        (CounterMatch::OfType(ct), after.trim())
+    } else {
+        return None;
+    };
+
+    // Expect "from " followed by a target reference.
+    let (after_from, _) = tag::<_, _, OracleError<'_>>("from ")
+        .parse(after_counter)
+        .ok()?;
+    let after_from = after_from.trim();
+
+    // "from it" / "from ~" → SelfRef.
+    let target = if tag::<_, _, OracleError<'_>>("it")
+        .parse(after_from)
+        .map(|(rest, _)| rest.trim().is_empty())
+        .unwrap_or(false)
+        || tag::<_, _, OracleError<'_>>("~")
+            .parse(after_from)
+            .map(|(rest, _)| rest.trim().is_empty())
+            .unwrap_or(false)
+    {
+        None // target = None encodes "self" for RemoveCounter
+    } else {
+        // CR 122.6 + CR 118.12: a TARGETED remove-counter unless-cost
+        // (`RemoveCounter { target: Some(_) }`, e.g. Chisei's "from a permanent
+        // you control") has no runtime payment path — `handle_unless_payment`
+        // leaves it in the unsupported fall-through, so emitting it would make
+        // the card worse than unsupported (paying the cost still resolves the
+        // punishment). Only the self-reference form ("from it"/"~", target None)
+        // is payable. Leave the targeted form unsupported (coverage honesty)
+        // until a target-choice payment flow exists.
+        return None;
+    };
+
+    Some(AbilityCost::RemoveCounter {
+        count,
+        counter_type,
+        target,
+        selection: CounterCostSelection::default(),
     })
 }
 
@@ -6786,7 +6934,39 @@ fn parse_damage_to_qualifier_with_rest(after_verb: &str) -> OracleResult<'_, Tar
         .parse(input)
     }
 
+    // CR 120.1 + CR 120.1a: "or battle" disjunction — extends player/opponent
+    // damage recipients to include battles (March of the Machine onward).
+    fn parse_opponent_or_battle_recipient(input: &str) -> OracleResult<'_, TargetFilter> {
+        value(
+            TargetFilter::Or {
+                filters: vec![
+                    opponent_player_filter(),
+                    TargetFilter::Typed(TypedFilter::new(TypeFilter::Battle)),
+                ],
+            },
+            preceded(
+                tag("an "),
+                alt((tag("opponent or battle"), tag("opponent or a battle"))),
+            ),
+        )
+        .parse(input)
+    }
+
     alt((
+        // CR 120.1 + CR 120.1a: Three-way disjunction — longest match first.
+        value(
+            TargetFilter::Or {
+                filters: vec![
+                    TargetFilter::Player,
+                    TargetFilter::Typed(TypedFilter::new(TypeFilter::Planeswalker)),
+                    TargetFilter::Typed(TypedFilter::new(TypeFilter::Battle)),
+                ],
+            },
+            alt((
+                tag("a player, planeswalker, or battle"),
+                tag("a player, a planeswalker, or a battle"),
+            )),
+        ),
         value(
             TargetFilter::Or {
                 filters: vec![
@@ -6799,7 +6979,18 @@ fn parse_damage_to_qualifier_with_rest(after_verb: &str) -> OracleResult<'_, Tar
                 tag("a player or a planeswalker"),
             )),
         ),
+        // CR 120.1 + CR 120.1a: Two-way player-or-battle disjunction.
+        value(
+            TargetFilter::Or {
+                filters: vec![
+                    TargetFilter::Player,
+                    TargetFilter::Typed(TypedFilter::new(TypeFilter::Battle)),
+                ],
+            },
+            alt((tag("a player or battle"), tag("a player or a battle"))),
+        ),
         value(TargetFilter::Player, tag("a player")),
+        parse_opponent_or_battle_recipient,
         parse_opponent_player_recipient,
         value(TargetFilter::Controller, tag("you")),
     ))
@@ -7868,7 +8059,7 @@ fn try_parse_event(
         Exploits,
         /// CR 701.44b: A permanent "explores" after the explore process completes.
         Explores,
-        /// CR 701.50b: A permanent "connives" after the connive process completes.
+        /// CR 701.50f: A permanent "connives" after the connive process completes.
         Connives,
         /// CR 702.100b: A creature "evolves" when +1/+1 counters are put on it
         /// as a result of its evolve ability resolving.
@@ -7912,7 +8103,7 @@ fn try_parse_event(
             value(SimpleEvent::BecomesBlocked, tag("become blocked")),
             // CR 702.171b: Mount becomes saddled (saddled designation acquired).
             value(SimpleEvent::BecomesSaddled, tag("becomes saddled")),
-            // CR 702.122d: "Whenever [this Vehicle] becomes crewed" — trigger fires
+            // CR 702.122e: "Whenever [this Vehicle] becomes crewed" — trigger fires
             // when a crew ability of this Vehicle resolves. Needed for Mighty Servant
             // of Leuk-O, Mindlink Mech, etc.
             value(SimpleEvent::BecomesCrewed, tag("becomes crewed")),
@@ -8024,7 +8215,7 @@ fn try_parse_event(
             // CR 701.44b: "explores" / "explore" — explore trigger
             value(SimpleEvent::Explores, tag("explores")),
             value(SimpleEvent::Explores, tag("explore")),
-            // CR 701.50b: "connives" — connive trigger (fires after the connive
+            // CR 701.50f: "connives" — connive trigger (fires after the connive
             // process completes).
             value(SimpleEvent::Connives, tag("connives")),
             // CR 702.100b: "evolves" / "evolve" — evolve trigger
@@ -8190,7 +8381,7 @@ fn try_parse_event(
                 if !remaining.trim().is_empty() {
                     return None;
                 }
-                // CR 701.50b: "connives" fires after the connive process completes.
+                // CR 701.50f: "connives" fires after the connive process completes.
                 // `subject` ("a creature you control" / "~") scopes the conniver.
                 def.mode = TriggerMode::Connives;
                 def.valid_card = Some(subject.clone());
@@ -8221,7 +8412,7 @@ fn try_parse_event(
                 def.valid_card = Some(subject.clone());
             }
             SimpleEvent::BecomesCrewed => {
-                // CR 702.122d: "Whenever [this Vehicle] becomes crewed" — fires when
+                // CR 702.122e: "Whenever [this Vehicle] becomes crewed" — fires when
                 // a crew ability of this Vehicle resolves. Runtime matcher
                 // (match_vehicle_crewed) already handles TriggerMode::BecomesCrewed.
                 def.mode = TriggerMode::BecomesCrewed;
@@ -9957,10 +10148,35 @@ fn try_parse_one_or_more_combat_damage_to_player(
         let Ok((rest, ())) = value((), tag::<_, _, OracleError<'_>>(prefix)).parse(lower) else {
             continue;
         };
-        let Some(subject_text) = rest
+        // CR 120.1a: Try battle-inclusive suffixes first (longer match wins).
+        // Covers "deal(s) combat damage to a player or (a )battle".
+        let (subject_text, recipient_filter) = if let Ok(("", t)) = terminated(
+            take_until::<_, _, OracleError<'_>>(" deal"),
+            (
+                tag(" deal"),
+                opt(tag("s")),
+                tag(" combat damage to a player or "),
+                opt(tag("a ")),
+                tag("battle"),
+            ),
+        )
+        .parse(rest)
+        {
+            (
+                t,
+                TargetFilter::Or {
+                    filters: vec![
+                        TargetFilter::Player,
+                        TargetFilter::Typed(TypedFilter::new(TypeFilter::Battle)),
+                    ],
+                },
+            )
+        } else if let Some(t) = rest
             .strip_suffix(" deal combat damage to a player")
             .or_else(|| rest.strip_suffix(" deals combat damage to a player"))
-        else {
+        {
+            (t, TargetFilter::Player)
+        } else {
             continue;
         };
 
@@ -9996,7 +10212,7 @@ fn try_parse_one_or_more_combat_damage_to_player(
         def.mode = TriggerMode::DamageDoneOnceByController;
         def.damage_kind = DamageKindFilter::CombatOnly;
         def.valid_source = Some(filter);
-        def.valid_target = Some(TargetFilter::Player);
+        def.valid_target = Some(recipient_filter);
         def.batched = true;
         return Some((TriggerMode::DamageDoneOnceByController, def));
     }
@@ -13614,6 +13830,70 @@ mod tests {
         }
     }
 
+    // --- CR 120.1 + CR 120.1a: "or battle" damage-recipient qualifier ---
+
+    #[test]
+    fn parse_damage_to_qualifier_player_or_battle() {
+        // CR 120.1a: "to a player or battle" must produce an Or filter
+        // containing both Player and Battle (Archpriest of Shadows class).
+        match parse_damage_to_qualifier("to a player or battle") {
+            Some(TargetFilter::Or { filters }) => {
+                assert!(filters.iter().any(|f| matches!(f, TargetFilter::Player)));
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter { type_filters, .. })
+                    if type_filters.contains(&TypeFilter::Battle)
+                )));
+            }
+            other => panic!("expected Or {{ Player, Battle }}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_damage_to_qualifier_opponent_or_battle() {
+        // CR 120.1a: "to an opponent or battle" — Bloodfeather Phoenix class.
+        match parse_damage_to_qualifier("to an opponent or battle") {
+            Some(TargetFilter::Or { filters }) => {
+                assert_eq!(filters.len(), 2);
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter {
+                        controller: Some(ControllerRef::Opponent),
+                        ..
+                    })
+                )));
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter { type_filters, .. })
+                    if type_filters.contains(&TypeFilter::Battle)
+                )));
+            }
+            other => panic!("expected Or {{ Opponent, Battle }}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_damage_to_qualifier_player_planeswalker_or_battle() {
+        // CR 120.1a: Three-way disjunction — Farseeing Flockmate class.
+        match parse_damage_to_qualifier("to a player, planeswalker, or battle") {
+            Some(TargetFilter::Or { filters }) => {
+                assert_eq!(filters.len(), 3);
+                assert!(filters.iter().any(|f| matches!(f, TargetFilter::Player)));
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter { type_filters, .. })
+                    if type_filters.contains(&TypeFilter::Planeswalker)
+                )));
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter { type_filters, .. })
+                    if type_filters.contains(&TypeFilter::Battle)
+                )));
+            }
+            other => panic!("expected Or {{ Player, Planeswalker, Battle }}, got {other:?}"),
+        }
+    }
+
     #[test]
     fn glory_of_battle_trigger_gates_on_creature_recipient() {
         // CR 120.3: "Whenever ~ deals damage to a creature, put a +1/+1 counter
@@ -15222,6 +15502,110 @@ mod tests {
         );
     }
 
+    // --- CR 120.1 + CR 120.1a: "or battle" damage-recipient triggers ---
+
+    #[test]
+    fn archpriest_of_shadows_player_or_battle_trigger() {
+        // CR 120.1a: "deals combat damage to a player or battle" must include
+        // Battle in the trigger's valid_target (Archpriest of Shadows class).
+        let def = parse_trigger_line(
+            "Whenever Archpriest of Shadows deals combat damage to a player or battle, return target creature card from your graveyard to the battlefield.",
+            "Archpriest of Shadows",
+        );
+        assert_eq!(def.mode, TriggerMode::DamageDone);
+        assert_eq!(def.damage_kind, DamageKindFilter::CombatOnly);
+        match &def.valid_target {
+            Some(TargetFilter::Or { filters }) => {
+                assert!(filters.iter().any(|f| matches!(f, TargetFilter::Player)));
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter { type_filters, .. })
+                    if type_filters.contains(&TypeFilter::Battle)
+                )));
+            }
+            other => panic!("expected Or {{ Player, Battle }}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bloodfeather_phoenix_opponent_or_battle_trigger() {
+        // CR 120.1a: "deals damage to an opponent or battle" — opponent disjunction.
+        let def = parse_trigger_line(
+            "Whenever an instant or sorcery spell you control deals damage to an opponent or battle, you may pay {R}. If you do, return Bloodfeather Phoenix from your graveyard to the battlefield.",
+            "Bloodfeather Phoenix",
+        );
+        assert_eq!(def.mode, TriggerMode::DamageDone);
+        match &def.valid_target {
+            Some(TargetFilter::Or { filters }) => {
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter {
+                        controller: Some(ControllerRef::Opponent),
+                        ..
+                    })
+                )));
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter { type_filters, .. })
+                    if type_filters.contains(&TypeFilter::Battle)
+                )));
+            }
+            other => panic!("expected Or {{ Opponent, Battle }}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn farseeing_flockmate_player_planeswalker_or_battle_trigger() {
+        // CR 120.1a: Three-way "a player, planeswalker, or battle" disjunction.
+        let def = parse_trigger_line(
+            "Whenever Farseeing Flockmate deals combat damage to a player, planeswalker, or battle, surveil 1.",
+            "Farseeing Flockmate",
+        );
+        assert_eq!(def.mode, TriggerMode::DamageDone);
+        assert_eq!(def.damage_kind, DamageKindFilter::CombatOnly);
+        match &def.valid_target {
+            Some(TargetFilter::Or { filters }) => {
+                assert_eq!(filters.len(), 3);
+                assert!(filters.iter().any(|f| matches!(f, TargetFilter::Player)));
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter { type_filters, .. })
+                    if type_filters.contains(&TypeFilter::Planeswalker)
+                )));
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter { type_filters, .. })
+                    if type_filters.contains(&TypeFilter::Battle)
+                )));
+            }
+            other => panic!("expected Or {{ Player, Planeswalker, Battle }}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zurgo_and_ojutai_one_or_more_player_or_battle_trigger() {
+        // CR 120.1a + CR 603.10a: "one or more dragons you control deal combat
+        // damage to a player or battle" — batched damage with battle recipient.
+        let def = parse_trigger_line(
+            "Whenever one or more Dragons you control deal combat damage to a player or battle, look at the top three cards of your library. Put one of them into your hand and the rest on the bottom of your library in a random order.",
+            "Zurgo and Ojutai",
+        );
+        assert_eq!(def.mode, TriggerMode::DamageDoneOnceByController);
+        assert!(def.batched);
+        assert_eq!(def.damage_kind, DamageKindFilter::CombatOnly);
+        match &def.valid_target {
+            Some(TargetFilter::Or { filters }) => {
+                assert!(filters.iter().any(|f| matches!(f, TargetFilter::Player)));
+                assert!(filters.iter().any(|f| matches!(
+                    f,
+                    TargetFilter::Typed(TypedFilter { type_filters, .. })
+                    if type_filters.contains(&TypeFilter::Battle)
+                )));
+            }
+            other => panic!("expected Or {{ Player, Battle }}, got {other:?}"),
+        }
+    }
+
     /// CR 406.3 + CR 701.16a + CR 400.7i: Gonti, Canny Acquisitor. "look at the
     /// top card of that player's library, then exile it face down" must rewrite
     /// the private `Dig` look step into a face-down `ExileTop` (issue #1316: the
@@ -16603,6 +16987,41 @@ mod tests {
             }
             other => panic!("expected source-filtered CopyTokenOf, got {other:?}"),
         }
+    }
+
+    /// CR 603.4 + CR 608.2c: Wick — post-effect "if you don't control a Snail"
+    /// on the Token clause must re-home to `execute.condition`, not hoist to
+    /// `def.condition`, so the trigger still fires when a Snail is present and
+    /// the Otherwise PutCounter runs via `else_ability`.
+    #[test]
+    fn wick_etb_post_effect_if_stays_on_execute_with_otherwise() {
+        use crate::types::ability::{AbilityCondition, Effect};
+
+        const WICK: &str = "Whenever Wick or another Rat you control enters, create a 1/1 black Snail creature token if you don't control a Snail. Otherwise, put a +1/+1 counter on a Snail you control.";
+        let def = parse_trigger_line(WICK, "Wick, the Whorled Mind");
+        assert!(
+            def.condition.is_none(),
+            "post-effect Snail gate must not hoist to trigger condition, got {:?}",
+            def.condition
+        );
+        let execute = def.execute.as_ref().expect("Wick ETB must have execute");
+        assert!(
+            matches!(
+                execute.condition,
+                Some(AbilityCondition::QuantityCheck { .. })
+            ),
+            "Token clause must carry the Snail control gate on execute.condition, got {:?}",
+            execute.condition
+        );
+        let else_branch = execute
+            .else_ability
+            .as_ref()
+            .expect("Otherwise must attach PutCounter as else_ability");
+        assert!(
+            matches!(*else_branch.effect, Effect::PutCounter { .. }),
+            "else branch must PutCounter, got {:?}",
+            else_branch.effect
+        );
     }
 
     /// CR 603.4: A post-effect `if` ("draw a card if Y") is NOT an
@@ -22813,7 +23232,8 @@ mod tests {
         assert_eq!(execute.player_scope, Some(PlayerFilter::Opponent));
     }
 
-    // NEGATIVE: documented non-goals must NOT be swallowed as unless-pay.
+    // NEGATIVE: bare "mill N" without "cards" suffix is NOT recognized as an
+    // unless-cost — it could be an effect-mill clause. Only "mill N cards" is.
     #[test]
     fn trigger_unless_you_mill_is_not_unless_pay() {
         let def = parse_trigger_line(
@@ -22822,9 +23242,117 @@ mod tests {
         );
         assert!(
             def.unless_pay.is_none(),
-            "mill is an unpayable unless-cost — must not be extracted, got {:?}",
+            "bare mill without 'cards' suffix must not be extracted, got {:?}",
             def.unless_pay
         );
+    }
+
+    // CR 118.12 + CR 701.17: "sacrifice ~ unless you mill two cards" — Deep
+    // Spawn. Mill word-count form recognized as unless-pay.
+    #[test]
+    fn trigger_unless_you_mill_two_cards() {
+        let def = parse_trigger_line(
+            "At the beginning of your upkeep, sacrifice ~ unless you mill two cards.",
+            "Deep Spawn",
+        );
+        let unless_pay = def.unless_pay.as_ref().expect("should have unless_pay");
+        assert!(
+            matches!(unless_pay.cost, AbilityCost::Mill { count: 2 }),
+            "expected Mill {{ count: 2 }}, got {:?}",
+            unless_pay.cost
+        );
+    }
+
+    // CR 118.12 + CR 701.9: "sacrifice it unless you discard two cards" —
+    // Avatar of Discord. Numeric discard count > 1.
+    #[test]
+    fn trigger_unless_you_discard_two_cards() {
+        let def = parse_trigger_line(
+            "When ~ enters, sacrifice it unless you discard two cards.",
+            "Avatar of Discord",
+        );
+        let unless_pay = def.unless_pay.as_ref().expect("should have unless_pay");
+        assert!(
+            matches!(
+                &unless_pay.cost,
+                AbilityCost::Discard { count, .. }
+                    if matches!(count, QuantityExpr::Fixed { value: 2 })
+            ),
+            "expected Discard count=2, got {:?}",
+            unless_pay.cost
+        );
+    }
+
+    // CR 122.6 + CR 118.12: "sacrifice ~ unless you remove a counter from a
+    // permanent you control" — Chisei, Heart of Oceans. The TARGETED
+    // remove-counter form has no runtime payment path (handle_unless_payment
+    // leaves `RemoveCounter { target: Some(_) }` unsupported), so the parser
+    // must NOT extract it — leaving the clause cleanly unsupported instead of
+    // emitting an unpayable cost. Self-reference ("from it") remains supported.
+    #[test]
+    fn trigger_unless_you_remove_targeted_counter_is_not_extracted() {
+        let def = parse_trigger_line(
+            "At the beginning of your upkeep, sacrifice ~ unless you remove a counter from a permanent you control.",
+            "Chisei, Heart of Oceans",
+        );
+        assert!(
+            def.unless_pay.is_none(),
+            "targeted remove-counter unless-cost must not be extracted (unpayable), got {:?}",
+            def.unless_pay
+        );
+    }
+
+    // CR 118.12 + CR 122.1: "sacrifice ~ unless you remove a +1/+1 counter
+    // from it" — Junk Golem. Typed counter, self target.
+    #[test]
+    fn trigger_unless_you_remove_plus_counter() {
+        let def = parse_trigger_line(
+            "At the beginning of your upkeep, sacrifice ~ unless you remove a +1/+1 counter from it.",
+            "Junk Golem",
+        );
+        let unless_pay = def.unless_pay.as_ref().expect("should have unless_pay");
+        assert!(
+            matches!(
+                &unless_pay.cost,
+                AbilityCost::RemoveCounter {
+                    count: 1,
+                    counter_type: CounterMatch::OfType(CounterType::Plus1Plus1),
+                    target: None,
+                    ..
+                }
+            ),
+            "expected RemoveCounter +1/+1, got {:?}",
+            unless_pay.cost
+        );
+    }
+
+    // CR 118.12 + CR 122.1: "return ~ to its owner's hand unless you remove
+    // two oil counters from it" — Magmatic Sprinter. Numeric count, typed
+    // counter, self target.
+    #[test]
+    fn trigger_unless_you_remove_two_oil_counters() {
+        let def = parse_trigger_line(
+            "At the beginning of your end step, return ~ to its owner's hand unless you remove two oil counters from it.",
+            "Magmatic Sprinter",
+        );
+        let unless_pay = def.unless_pay.as_ref().expect("should have unless_pay");
+        match &unless_pay.cost {
+            AbilityCost::RemoveCounter {
+                count,
+                counter_type,
+                target,
+                ..
+            } => {
+                assert_eq!(*count, 2);
+                assert!(
+                    matches!(counter_type, CounterMatch::OfType(ct) if ct == &crate::types::counter::parse_counter_type("oil")),
+                    "expected oil counter type, got {:?}",
+                    counter_type
+                );
+                assert_eq!(*target, None, "self target should be None");
+            }
+            other => panic!("expected RemoveCounter, got {:?}", other),
+        }
     }
 
     #[test]
