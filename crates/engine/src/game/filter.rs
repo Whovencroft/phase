@@ -752,6 +752,60 @@ pub fn matches_target_filter(
     filter_inner(state, object_id, filter, ctx)
 }
 
+/// CR 701.20e + CR 608.2c: Look-then-cast chains publish cards via
+/// `last_revealed_ids` while the parser still binds later steps to
+/// `ExiledBySource`. When resolving those steps against library cards,
+/// treat the exile reference as `LastRevealed`.
+pub fn remap_exiled_by_source_for_looked_cards(filter: &TargetFilter) -> TargetFilter {
+    match filter {
+        TargetFilter::ExiledBySource => TargetFilter::LastRevealed,
+        TargetFilter::And { filters } => TargetFilter::And {
+            filters: filters
+                .iter()
+                .map(remap_exiled_by_source_for_looked_cards)
+                .collect(),
+        },
+        TargetFilter::Or { filters } => TargetFilter::Or {
+            filters: filters
+                .iter()
+                .map(remap_exiled_by_source_for_looked_cards)
+                .collect(),
+        },
+        TargetFilter::Not { filter } => TargetFilter::Not {
+            filter: Box::new(remap_exiled_by_source_for_looked_cards(filter)),
+        },
+        TargetFilter::TrackedSetFiltered {
+            id,
+            filter,
+            caused_by,
+        } => TargetFilter::TrackedSetFiltered {
+            id: *id,
+            filter: Box::new(remap_exiled_by_source_for_looked_cards(filter)),
+            caused_by: *caused_by,
+        },
+        other => other.clone(),
+    }
+}
+
+/// Library cards from `last_revealed_ids` matching a look-then-cast filter.
+pub fn last_revealed_library_ids_matching(
+    state: &GameState,
+    filter: &TargetFilter,
+    ctx: &FilterContext<'_>,
+) -> Vec<ObjectId> {
+    let looked_filter = remap_exiled_by_source_for_looked_cards(filter);
+    state
+        .last_revealed_ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            state.objects.get(id).is_some_and(|obj| {
+                obj.zone == Zone::Library && matches_target_filter(state, *id, &looked_filter, ctx)
+            })
+        })
+        .collect()
+}
+
 /// CR 405.1 + CR 115.9b: Match filters against a spell or ability on the
 /// stack, including nested "targets ..." predicates on that stack entry.
 pub(crate) fn matches_stack_target_filter(

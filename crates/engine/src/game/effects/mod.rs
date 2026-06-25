@@ -1925,6 +1925,33 @@ fn effect_writes_last_revealed_ids(effect: &Effect) -> bool {
     )
 }
 
+fn target_filter_for_last_revealed_sub(effect: &Effect) -> Option<&TargetFilter> {
+    match effect {
+        Effect::CastFromZone { target, .. } => Some(target),
+        Effect::PutAtLibraryPosition { target, .. } => Some(target),
+        _ => None,
+    }
+}
+
+fn inject_last_revealed_targets(
+    state: &GameState,
+    parent_ability: &ResolvedAbility,
+    sub: &ResolvedAbility,
+) -> Vec<TargetRef> {
+    if let Some(filter) = target_filter_for_last_revealed_sub(&sub.effect) {
+        let ctx = crate::game::filter::FilterContext::from_ability(parent_ability);
+        return crate::game::filter::last_revealed_library_ids_matching(state, filter, &ctx)
+            .into_iter()
+            .map(TargetRef::Object)
+            .collect();
+    }
+    state
+        .last_revealed_ids
+        .iter()
+        .map(|&id| TargetRef::Object(id))
+        .collect()
+}
+
 fn should_resolve_subability_on_optional_decline(ability: &ResolvedAbility) -> bool {
     match ability.condition {
         Some(AbilityCondition::Not { ref condition })
@@ -6526,11 +6553,7 @@ fn resolve_chain_body(
             // effects that write last_revealed_ids. Parallel to how
             // continuations inject chosen cards as targets.
             let mut sub_with_targets = sub.as_ref().clone();
-            sub_with_targets.targets = state
-                .last_revealed_ids
-                .iter()
-                .map(|&id| TargetRef::Object(id))
-                .collect();
+            sub_with_targets.targets = inject_last_revealed_targets(state, ability, sub.as_ref());
             apply_parent_chain_context(
                 &mut sub_with_targets,
                 ability,
@@ -19120,6 +19143,118 @@ mod tests {
             run_turtle_van_chain("Wizard", 2),
             3,
             "non-matching crewer: only the +1/+1 counter is added, no doubling"
+        );
+    }
+
+    /// Issue #2019 — Kiora-style look-then-cast must filter chain-injected targets
+    /// through the CastFromZone filter, not grant every looked card.
+    #[test]
+    fn look_then_cast_chain_filters_injected_targets_by_cast_filter() {
+        use crate::game::ability_utils::build_resolved_from_def;
+        use crate::types::ability::{CardPlayMode, CastFromZoneDriver, DigSource, TypeFilter};
+
+        let mut state = GameState::new_two_player(42);
+        let source = create_object(
+            &mut state,
+            CardId(900),
+            PlayerId(0),
+            "Kiora".to_string(),
+            Zone::Battlefield,
+        );
+        create_object(
+            &mut state,
+            CardId(1),
+            PlayerId(0),
+            "Library Creature".to_string(),
+            Zone::Library,
+        );
+        create_object(
+            &mut state,
+            CardId(2),
+            PlayerId(0),
+            "Library Instant".to_string(),
+            Zone::Library,
+        );
+        let top_instant = state.players[0].library[0];
+        let second_creature = state.players[0].library[1];
+        state
+            .objects
+            .get_mut(&top_instant)
+            .unwrap()
+            .card_types
+            .core_types
+            .push(CoreType::Instant);
+        state
+            .objects
+            .get_mut(&second_creature)
+            .unwrap()
+            .card_types
+            .core_types
+            .push(CoreType::Creature);
+
+        let cast_sub = AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::CastFromZone {
+                target: TargetFilter::And {
+                    filters: vec![
+                        TargetFilter::Typed(TypedFilter::new(TypeFilter::Instant)),
+                        TargetFilter::ExiledBySource,
+                    ],
+                },
+                without_paying_mana_cost: true,
+                mode: CardPlayMode::Cast,
+                cast_transformed: false,
+                alt_ability_cost: None,
+                constraint: None,
+                duration: None,
+                driver: CastFromZoneDriver::LingeringPermission,
+            },
+        );
+        let dig_def = AbilityDefinition::new(
+            AbilityKind::Spell,
+            Effect::Dig {
+                player: TargetFilter::Controller,
+                count: QuantityExpr::Fixed { value: 2 },
+                destination: None,
+                keep_count: Some(0),
+                up_to: false,
+                filter: TargetFilter::Any,
+                rest_destination: None,
+                reveal: false,
+                enter_tapped: false,
+                source: DigSource::Library,
+            },
+        )
+        .sub_ability(cast_sub);
+
+        let ability = build_resolved_from_def(&dig_def, source, PlayerId(0));
+        let mut events = Vec::new();
+        resolve_ability_chain(&mut state, &ability, &mut events, 0)
+            .expect("look-then-cast chain must resolve");
+
+        let instant_obj = state.objects.get(&top_instant).expect("instant");
+        assert_eq!(
+            instant_obj.zone,
+            Zone::Exile,
+            "legal instant must be exiled for cast grant"
+        );
+        assert!(
+            instant_obj.casting_permissions.iter().any(|p| matches!(
+                p,
+                CastingPermission::ExileWithAltCost { cost, .. } if *cost == ManaCost::zero()
+            )),
+            "legal instant must receive a free cast permission"
+        );
+
+        let creature_obj = state.objects.get(&second_creature).expect("creature");
+        assert_eq!(
+            creature_obj.zone,
+            Zone::Library,
+            "illegal looked creature must stay in library"
+        );
+        assert!(
+            creature_obj.casting_permissions.is_empty(),
+            "illegal looked creature must not receive a cast permission"
         );
     }
 }
