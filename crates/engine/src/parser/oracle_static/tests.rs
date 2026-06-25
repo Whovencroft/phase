@@ -20341,6 +20341,7 @@ fn static_creatures_defending_player_controls_not_via_suffix_parser() {
         "parse_creature_subject_filter must not accept 'defending player controls' as a controller suffix"
     );
 }
+<<<<<<< feat/curse-of-the-nightly-hunt
 #[test]
 fn static_creatures_enchanted_player_controls_attack_each_combat_if_able() {
     // Curse of the Nightly Hunt: "Creatures enchanted player controls attack each combat if able."
@@ -20355,3 +20356,5 @@ fn static_creatures_enchanted_player_controls_attack_each_combat_if_able() {
         ))
     );
 }
+=======
+>>>>>>> main
