@@ -1331,6 +1331,7 @@ pub fn matches_target_filter_on_lki_snapshot(
         is_token: false,
         combat_status: Default::default(),
         co_departed: Vec::new(),
+        attached_to: None,
         entered_incarnation: None,
         turn_zone_change_index: 0,
     };
