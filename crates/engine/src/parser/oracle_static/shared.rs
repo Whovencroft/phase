@@ -2487,9 +2487,9 @@ pub(crate) fn parse_creature_subject_filter(subject: &str) -> Option<TargetFilte
     let tp = TextPair::new(trimmed, &lower);
 
     // CR 109.5 + CR 303.4b: Split the subject into a descriptor core and an
-    // optional controller suffix. Delegates to the shared nom grammar
-    // (`nom_filter::parse_zone_controller`) so all controller phrases are
-    // maintained in a single authority.
+    // optional controller suffix. Uses `parse_static_controller_suffix`, a
+    // restricted nom grammar that only accepts the controller scopes this
+    // static seam can resolve (You, Opponent, EnchantedPlayer).
     let (subject_core, controller) = strip_subject_controller_suffix(tp.original, &lower);
 
     let subject_core_lower = subject_core.to_lowercase();
