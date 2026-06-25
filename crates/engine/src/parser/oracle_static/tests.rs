@@ -20298,3 +20298,21 @@ fn will_scion_of_peace_activated_ability_parses_clean() {
         tf.properties
     );
 }
+
+#[test]
+fn static_creatures_enchanted_player_controls_get_minus_1_minus_1() {
+    // CR 303.4b + CR 613.4c: Curse of Death's Hold — continuous P/T debuff
+    // scoped to the enchanted player's creatures. The subject "Creatures
+    // enchanted player controls" must parse into a creature TypedFilter with
+    // `ControllerRef::EnchantedPlayer`.
+    let def =
+        parse_static_line("Creatures enchanted player controls get -1/-1.").unwrap();
+    assert_eq!(def.mode, StaticMode::Continuous);
+    assert!(matches!(
+        def.affected,
+        Some(TargetFilter::Typed(TypedFilter {
+            controller: Some(ControllerRef::EnchantedPlayer),
+            ..
+        }))
+    ));
+}

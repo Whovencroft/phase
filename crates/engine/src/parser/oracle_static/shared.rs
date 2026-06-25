@@ -2443,6 +2443,10 @@ pub(crate) fn parse_creature_subject_filter(subject: &str) -> Option<TargetFilte
     } else if let Some(prefix) = tp.original.strip_suffix(" your opponents control") {
         // allow-noncombinator: moved legacy static parser code; refactor-only split preserves behavior.
         (prefix.trim(), Some(ControllerRef::Opponent))
+    // allow-noncombinator: extending grandfathered controller-suffix block (same pattern as existing arms).
+    } else if let Some(prefix) = tp.original.strip_suffix(" enchanted player controls") {
+        // CR 303.4b: "enchanted player" refers to the player the source Aura is attached to.
+        (prefix.trim(), Some(ControllerRef::EnchantedPlayer))
     } else {
         (tp.original, None)
     };
