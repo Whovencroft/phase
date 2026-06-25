@@ -2430,41 +2430,48 @@ pub(crate) fn descriptor_is_supertype(descriptor: &str) -> bool {
 }
 
 /// Nom-backed helper: split a subject string into (descriptor_core, controller)
-/// by trying to parse a trailing controller suffix via the shared
-/// `nom_filter::parse_zone_controller` grammar. Returns the original-case
-/// descriptor prefix and `Some(ControllerRef)` on match, or the full original
-/// text and `None` if no suffix matches.
+/// by trying to parse a trailing controller suffix. Only accepts the controller
+/// scopes that this static subject seam can actually resolve:
 ///
-/// This keeps the controller-phrase grammar in a single authority
-/// (`oracle_nom::filter::parse_zone_controller`) rather than duplicating
-/// verbatim suffix strings in the static parser.
+/// - `ControllerRef::You` — "you control"
+/// - `ControllerRef::Opponent` — "your opponents control" / "you don't control"
+/// - `ControllerRef::EnchantedPlayer` — "enchanted player controls" (CR 303.4b)
+///
+/// `TargetPlayer` and `DefendingPlayer` are deliberately excluded because this
+/// call site builds a continuous static `TargetFilter` with no companion
+/// target-player authority or combat context.
+///
+/// Uses nom `alt`/`tag`/`value` combinators so the phrase set is maintained
+/// alongside the shared grammar rather than as raw suffix literals.
+fn parse_static_controller_suffix(input: &str) -> OracleResult<'_, ControllerRef> {
+    alt((
+        value(ControllerRef::You, tag("you control")),
+        value(ControllerRef::Opponent, tag("your opponents control")),
+        value(ControllerRef::Opponent, tag("you don't control")),
+        // CR 303.4b + CR 702.5a: "enchanted player controls" — the controller
+        // scope is the player the source Aura is attached to.
+        value(
+            ControllerRef::EnchantedPlayer,
+            tag("enchanted player controls"),
+        ),
+    ))
+    .parse(input)
+}
+
+/// Strip a trailing controller suffix from a subject string using the
+/// restricted nom grammar above. Returns (descriptor_core, Some(controller))
+/// on match, or (original, None) if no valid suffix is found.
 fn strip_subject_controller_suffix<'a>(
     original: &'a str,
     lower: &str,
 ) -> (&'a str, Option<ControllerRef>) {
-    // The controller suffix is always preceded by a space. Walk backwards
-    // through each space-delimited split point and try the nom grammar on the
-    // trailing portion.
-    for (byte_idx, _) in lower.rmatch_indices(' ') {
-        let suffix_lower = &lower[byte_idx + 1..];
-        if let Ok((rest, ctrl)) = nom_filter::parse_zone_controller(suffix_lower) {
-            if rest.is_empty() {
-                return (original[..byte_idx].trim(), Some(ctrl));
-            }
-        }
-        // Some controller phrases are multi-word ("your opponents control",
-        // "enchanted player controls"). Try from the space INCLUDING the
-        // leading space character stripped (the tag in parse_zone_controller
-        // does NOT expect a leading space).
-    }
-    // Two-pass: also try from each space where the suffix is TWO or more words.
-    // parse_zone_controller expects the full phrase without leading space, so
-    // we try substrings starting after each space.
+    // Try each space-delimited split point (left to right) and check if the
+    // remainder is a complete controller suffix.
     let mut start = 0;
     while let Some(pos) = lower[start..].find(' ') {
         let abs_pos = start + pos;
         let suffix_lower = &lower[abs_pos + 1..];
-        if let Ok((rest, ctrl)) = nom_filter::parse_zone_controller(suffix_lower) {
+        if let Ok((rest, ctrl)) = parse_static_controller_suffix(suffix_lower) {
             if rest.is_empty() {
                 return (original[..abs_pos].trim(), Some(ctrl));
             }

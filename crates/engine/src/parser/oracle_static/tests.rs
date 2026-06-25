@@ -20315,3 +20315,26 @@ fn static_creatures_enchanted_player_controls_get_minus_1_minus_1() {
         }))
     ));
 }
+
+#[test]
+fn static_creatures_target_player_controls_rejected() {
+    // Negative test: "target player controls" is not a valid controller scope
+    // for the continuous static subject seam — it requires a companion
+    // target-player authority that this path cannot provide.
+    let result = parse_static_line("Creatures target player controls get -1/-1.");
+    assert!(
+        result.is_none(),
+        "target player controls must not parse as a continuous static subject"
+    );
+}
+
+#[test]
+fn static_creatures_defending_player_controls_rejected() {
+    // Negative test: "defending player controls" is combat-context only and
+    // must not be accepted as a continuous static subject suffix.
+    let result = parse_static_line("Creatures defending player controls get -1/-1.");
+    assert!(
+        result.is_none(),
+        "defending player controls must not parse as a continuous static subject"
+    );
+}
