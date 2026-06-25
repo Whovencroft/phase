@@ -566,6 +566,7 @@ impl ZoneChangeRecord {
             is_token: false,
             combat_status: ZoneChangeCombatStatus::default(),
             co_departed: Vec::new(),
+            attached_to: None,
             entered_incarnation: None,
             turn_zone_change_index: 0,
         }
