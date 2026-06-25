@@ -176,14 +176,6 @@ fn trespassers_curse_does_not_fire_for_non_enchanted_player() {
     );
 
     // Life totals unchanged.
-    assert_eq!(
-        runner.life(P0),
-        life_p0_before,
-        "P0 life must be unchanged"
-    );
-    assert_eq!(
-        runner.life(P1),
-        life_p1_before,
-        "P1 life must be unchanged"
-    );
+    assert_eq!(runner.life(P0), life_p0_before, "P0 life must be unchanged");
+    assert_eq!(runner.life(P1), life_p1_before, "P1 life must be unchanged");
 }
