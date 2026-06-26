@@ -58,7 +58,6 @@ fn stack_triggers_from(runner: &GameRunner, source: ObjectId) -> usize {
         .count()
 }
 
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -190,7 +189,10 @@ fn curse_of_fools_wisdom_fires_when_enchanted_player_draws() {
 
     // Verify the curse is properly set up.
     let curse_obj = runner.state().objects.get(&curse_id);
-    assert!(curse_obj.is_some(), "Curse of Fool's Wisdom must be on the battlefield");
+    assert!(
+        curse_obj.is_some(),
+        "Curse of Fool's Wisdom must be on the battlefield"
+    );
     assert_eq!(
         curse_obj.unwrap().attached_to.and_then(|h| h.as_player()),
         Some(P1),
@@ -207,13 +209,8 @@ fn curse_of_obsession_fires_at_draw_step() {
     scenario.at_phase(Phase::PreCombatMain);
 
     let curse_id = {
-        let mut builder = scenario.add_creature_from_oracle(
-            P0,
-            "Curse of Obsession",
-            0,
-            0,
-            CURSE_OF_OBSESSION,
-        );
+        let mut builder =
+            scenario.add_creature_from_oracle(P0, "Curse of Obsession", 0, 0, CURSE_OF_OBSESSION);
         builder.as_enchantment();
         builder.with_subtypes(vec!["Aura", "Curse"]);
         builder.id()
@@ -234,7 +231,10 @@ fn curse_of_obsession_fires_at_draw_step() {
 
     // Verify the curse is properly set up.
     let curse_obj = runner.state().objects.get(&curse_id);
-    assert!(curse_obj.is_some(), "Curse of Obsession must be on the battlefield");
+    assert!(
+        curse_obj.is_some(),
+        "Curse of Obsession must be on the battlefield"
+    );
     assert_eq!(
         curse_obj.unwrap().attached_to.and_then(|h| h.as_player()),
         Some(P1),
@@ -270,8 +270,12 @@ fn curse_of_shaken_faith_fires_on_second_spell() {
     let dummy2 = scenario.add_creature(P0, "Ornithopter", 0, 2).id();
 
     // Mana for P1.
-    let mana_unit =
-        engine::types::mana::ManaUnit::new(engine::types::mana::ManaType::Red, ObjectId(0), false, vec![]);
+    let mana_unit = engine::types::mana::ManaUnit::new(
+        engine::types::mana::ManaType::Red,
+        ObjectId(0),
+        false,
+        vec![],
+    );
     scenario.with_mana_pool(P1, vec![mana_unit.clone(), mana_unit]);
 
     // Library padding.
@@ -283,8 +287,7 @@ fn curse_of_shaken_faith_fires_on_second_spell() {
     let mut runner = scenario.build();
     runner.state_mut().active_player = P1;
     runner.state_mut().priority_player = P1;
-    runner.state_mut().waiting_for =
-        engine::types::game_state::WaitingFor::Priority { player: P1 };
+    runner.state_mut().waiting_for = engine::types::game_state::WaitingFor::Priority { player: P1 };
 
     attach_to_player(runner.state_mut(), curse_id, P1);
     evaluate_layers(runner.state_mut());

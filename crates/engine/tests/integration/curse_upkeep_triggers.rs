@@ -70,8 +70,6 @@ fn stack_triggers_from(runner: &GameRunner, source: ObjectId) -> usize {
         .count()
 }
 
-
-
 /// Build a curse on the battlefield under P0's control, attached to P1.
 /// The scenario starts at `Phase::Untap` so `advance_to_upkeep` can drive
 /// through the untap step into P1's upkeep.
@@ -113,10 +111,8 @@ fn setup_upkeep_curse(oracle: &str, name: &str) -> (GameRunner, ObjectId) {
 /// Curse of the Pierced Heart: deals 1 damage to enchanted player at upkeep.
 #[test]
 fn curse_of_the_pierced_heart_fires_at_upkeep() {
-    let (mut runner, curse_id) = setup_upkeep_curse(
-        CURSE_OF_THE_PIERCED_HEART,
-        "Curse of the Pierced Heart",
-    );
+    let (mut runner, curse_id) =
+        setup_upkeep_curse(CURSE_OF_THE_PIERCED_HEART, "Curse of the Pierced Heart");
 
     let life_before = runner.life(P1);
     runner.advance_to_upkeep();
@@ -139,8 +135,7 @@ fn curse_of_the_pierced_heart_fires_at_upkeep() {
 /// With one curse attached, deals 1 damage.
 #[test]
 fn curse_of_thirst_fires_at_upkeep() {
-    let (mut runner, curse_id) =
-        setup_upkeep_curse(CURSE_OF_THIRST, "Curse of Thirst");
+    let (mut runner, curse_id) = setup_upkeep_curse(CURSE_OF_THIRST, "Curse of Thirst");
 
     runner.advance_to_upkeep();
 
@@ -153,10 +148,8 @@ fn curse_of_thirst_fires_at_upkeep() {
 /// Curse of the Bloody Tome: enchanted player mills two cards at upkeep.
 #[test]
 fn curse_of_the_bloody_tome_fires_at_upkeep() {
-    let (mut runner, curse_id) = setup_upkeep_curse(
-        CURSE_OF_THE_BLOODY_TOME,
-        "Curse of the Bloody Tome",
-    );
+    let (mut runner, curse_id) =
+        setup_upkeep_curse(CURSE_OF_THE_BLOODY_TOME, "Curse of the Bloody Tome");
 
     runner.advance_to_upkeep();
 
@@ -210,10 +203,7 @@ fn curse_of_oblivion_fires_at_upkeep() {
 /// Curse of Surveillance: trigger fires at enchanted player's upkeep.
 #[test]
 fn curse_of_surveillance_fires_at_upkeep() {
-    let (mut runner, curse_id) = setup_upkeep_curse(
-        CURSE_OF_SURVEILLANCE,
-        "Curse of Surveillance",
-    );
+    let (mut runner, curse_id) = setup_upkeep_curse(CURSE_OF_SURVEILLANCE, "Curse of Surveillance");
 
     runner.advance_to_upkeep();
 
@@ -226,10 +216,7 @@ fn curse_of_surveillance_fires_at_upkeep() {
 /// Curse of Misfortunes: trigger fires at enchanted player's upkeep.
 #[test]
 fn curse_of_misfortunes_fires_at_upkeep() {
-    let (mut runner, curse_id) = setup_upkeep_curse(
-        CURSE_OF_MISFORTUNES,
-        "Curse of Misfortunes",
-    );
+    let (mut runner, curse_id) = setup_upkeep_curse(CURSE_OF_MISFORTUNES, "Curse of Misfortunes");
 
     runner.advance_to_upkeep();
 
@@ -242,8 +229,7 @@ fn curse_of_misfortunes_fires_at_upkeep() {
 /// Curse of Unbinding: trigger fires at enchanted player's upkeep.
 #[test]
 fn curse_of_unbinding_fires_at_upkeep() {
-    let (mut runner, curse_id) =
-        setup_upkeep_curse(CURSE_OF_UNBINDING, "Curse of Unbinding");
+    let (mut runner, curse_id) = setup_upkeep_curse(CURSE_OF_UNBINDING, "Curse of Unbinding");
 
     runner.advance_to_upkeep();
 
@@ -257,8 +243,7 @@ fn curse_of_unbinding_fires_at_upkeep() {
 /// With no creatures or planeswalkers, enchanted player loses 5 life.
 #[test]
 fn cruel_reality_fires_at_upkeep() {
-    let (mut runner, curse_id) =
-        setup_upkeep_curse(CRUEL_REALITY, "Cruel Reality");
+    let (mut runner, curse_id) = setup_upkeep_curse(CRUEL_REALITY, "Cruel Reality");
 
     runner.advance_to_upkeep();
 
@@ -272,8 +257,7 @@ fn cruel_reality_fires_at_upkeep() {
 /// With no nonland permanents and no cards in hand, enchanted player loses 3 life.
 #[test]
 fn torment_of_scarabs_fires_at_upkeep() {
-    let (mut runner, curse_id) =
-        setup_upkeep_curse(TORMENT_OF_SCARABS, "Torment of Scarabs");
+    let (mut runner, curse_id) = setup_upkeep_curse(TORMENT_OF_SCARABS, "Torment of Scarabs");
 
     runner.advance_to_upkeep();
 

@@ -121,8 +121,7 @@ fn declare_attack_on_p1(runner: &mut GameRunner, attacker: ObjectId) {
 /// Curse of Chaos: trigger fires when P0 attacks enchanted player P1.
 #[test]
 fn curse_of_chaos_fires_when_player_attacks_enchanted_player() {
-    let (mut runner, curse_id, attacker) =
-        setup_attack_curse(CURSE_OF_CHAOS, "Curse of Chaos");
+    let (mut runner, curse_id, attacker) = setup_attack_curse(CURSE_OF_CHAOS, "Curse of Chaos");
 
     declare_attack_on_p1(&mut runner, attacker);
 
@@ -135,8 +134,7 @@ fn curse_of_chaos_fires_when_player_attacks_enchanted_player() {
 /// Curse of Inertia: trigger fires when P0 attacks enchanted player P1.
 #[test]
 fn curse_of_inertia_fires_when_player_attacks_enchanted_player() {
-    let (mut runner, curse_id, attacker) =
-        setup_attack_curse(CURSE_OF_INERTIA, "Curse of Inertia");
+    let (mut runner, curse_id, attacker) = setup_attack_curse(CURSE_OF_INERTIA, "Curse of Inertia");
 
     declare_attack_on_p1(&mut runner, attacker);
 

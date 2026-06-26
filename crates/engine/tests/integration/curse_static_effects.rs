@@ -25,8 +25,7 @@ use engine::types::phase::Phase;
 // Oracle texts
 // ---------------------------------------------------------------------------
 
-const CURSE_OF_EXHAUSTION: &str =
-    "Enchanted player can't cast more than one spell each turn.";
+const CURSE_OF_EXHAUSTION: &str = "Enchanted player can't cast more than one spell each turn.";
 
 const OVERWHELMING_SPLENDOR: &str =
     "Creatures enchanted player controls lose all abilities and have base power and toughness 1/1.\n\
@@ -148,13 +147,8 @@ fn curse_of_exhaustion_restricts_enchanted_player() {
     scenario.at_phase(Phase::PreCombatMain);
 
     let curse = {
-        let mut builder = scenario.add_creature_from_oracle(
-            P0,
-            "Curse of Exhaustion",
-            0,
-            0,
-            CURSE_OF_EXHAUSTION,
-        );
+        let mut builder =
+            scenario.add_creature_from_oracle(P0, "Curse of Exhaustion", 0, 0, CURSE_OF_EXHAUSTION);
         builder.as_enchantment();
         builder.with_subtypes(vec!["Aura", "Curse"]);
         builder.id()
@@ -221,10 +215,7 @@ fn curse_of_bloodletting_doubles_damage_to_enchanted_player() {
     // Advance to combat and declare the attacker.
     runner.advance_to_combat();
     runner
-        .declare_attackers(&[(
-            attacker,
-            engine::game::combat::AttackTarget::Player(P1),
-        )])
+        .declare_attackers(&[(attacker, engine::game::combat::AttackTarget::Player(P1))])
         .expect("DeclareAttackers must succeed");
 
     let life_before = runner.life(P1);

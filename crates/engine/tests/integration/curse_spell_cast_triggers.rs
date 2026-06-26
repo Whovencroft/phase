@@ -48,10 +48,7 @@ fn mana(color: ManaType) -> ManaUnit {
 /// Build a curse on the battlefield under P0's control, attached to P1.
 /// P1 has a spell in hand and mana to cast it.
 /// Returns (runner, curse_id, spell_id, target_id).
-fn setup_spell_cast_curse(
-    oracle: &str,
-    name: &str,
-) -> (GameRunner, ObjectId, ObjectId, ObjectId) {
+fn setup_spell_cast_curse(oracle: &str, name: &str) -> (GameRunner, ObjectId, ObjectId, ObjectId) {
     let mut scenario = GameScenario::new();
     scenario.at_phase(Phase::PreCombatMain);
 
@@ -114,7 +111,9 @@ fn curse_of_vengeance_fires_on_spell_cast() {
         .get(&curse_id)
         .map(|obj| {
             obj.counters
-                .get(&engine::types::counter::CounterType::Generic("spite".to_string()))
+                .get(&engine::types::counter::CounterType::Generic(
+                    "spite".to_string(),
+                ))
                 .copied()
                 .unwrap_or(0)
         })
@@ -144,10 +143,13 @@ fn curse_of_echoes_fires_on_instant_cast() {
     // The trigger may already have been processed during commit's priority passing.
     // At minimum, verify the spell was cast successfully.
     assert!(
-        runner.state().spells_cast_this_turn_by_player
+        runner
+            .state()
+            .spells_cast_this_turn_by_player
             .get(&P1)
             .map(|v| v.len())
-            .unwrap_or(0) >= 1,
+            .unwrap_or(0)
+            >= 1,
         "P1 must have cast at least one spell"
     );
 }
@@ -165,16 +167,15 @@ fn maddening_hex_fires_on_noncreature_spell_cast() {
     scenario.at_phase(Phase::PreCombatMain);
 
     let curse_id = {
-        let mut builder = scenario.add_creature_from_oracle(P0, "Maddening Hex", 0, 0, MADDENING_HEX);
+        let mut builder =
+            scenario.add_creature_from_oracle(P0, "Maddening Hex", 0, 0, MADDENING_HEX);
         builder.as_enchantment();
         builder.with_subtypes(vec!["Aura", "Curse"]);
         builder.id()
     };
 
     // Use a no-target sorcery.
-    let spell_id = scenario.add_spell_to_hand(
-        P1, "Explore", false,
-    ).id();
+    let spell_id = scenario.add_spell_to_hand(P1, "Explore", false).id();
 
     scenario.with_mana_pool(P1, vec![mana(ManaType::Green), mana(ManaType::Colorless)]);
 
@@ -194,12 +195,14 @@ fn maddening_hex_fires_on_noncreature_spell_cast() {
 
     // Manually cast the spell.
     let card_id = runner.state().objects[&spell_id].card_id;
-    runner.act(GameAction::CastSpell {
-        object_id: spell_id,
-        card_id,
-        targets: vec![],
-        payment_mode: CastPaymentMode::Auto,
-    }).expect("CastSpell must succeed");
+    runner
+        .act(GameAction::CastSpell {
+            object_id: spell_id,
+            card_id,
+            targets: vec![],
+            payment_mode: CastPaymentMode::Auto,
+        })
+        .expect("CastSpell must succeed");
 
     // Drive until we hit a priority window or TriggerTargetSelection.
     for _ in 0..30 {
