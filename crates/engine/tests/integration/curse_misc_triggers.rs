@@ -154,12 +154,12 @@ fn curse_of_clinging_webs_does_not_fire_for_non_enchanted_player() {
 }
 
 /// Curse of Fool's Wisdom: trigger fires when enchanted player draws a card.
-/// We verify the curse is properly set up and attached. The draw-step trigger
-/// integration requires the full turn pipeline which is complex to drive manually.
+/// We drive a real draw via `execute_draw` and assert the curse puts a trigger
+/// on the stack (CR 603.2: triggered abilities trigger when their event occurs).
 #[test]
 fn curse_of_fools_wisdom_fires_when_enchanted_player_draws() {
     let mut scenario = GameScenario::new();
-    scenario.at_phase(Phase::PreCombatMain);
+    scenario.at_phase(Phase::Draw);
 
     let curse_id = {
         let mut builder = scenario.add_creature_from_oracle(
@@ -187,26 +187,29 @@ fn curse_of_fools_wisdom_fires_when_enchanted_player_draws() {
     evaluate_layers(runner.state_mut());
     reindex_object_triggers(runner.state_mut(), curse_id);
 
-    // Verify the curse is properly set up.
-    let curse_obj = runner.state().objects.get(&curse_id);
+    // Drive a real draw-step draw for P1.
+    let mut events = Vec::new();
+    engine::game::turns::execute_draw(runner.state_mut(), &mut events);
+    process_triggers(runner.state_mut(), &events);
+    drain_order_triggers_with_identity(runner.state_mut());
+
+    // The curse must have placed a trigger on the stack from its source.
     assert!(
-        curse_obj.is_some(),
-        "Curse of Fool's Wisdom must be on the battlefield"
-    );
-    assert_eq!(
-        curse_obj.unwrap().attached_to.and_then(|h| h.as_player()),
-        Some(P1),
-        "Curse of Fool's Wisdom must be attached to P1"
+        stack_triggers_from(&runner, curse_id) >= 1,
+        "Curse of Fool's Wisdom must trigger when enchanted player draws a card"
     );
 }
 
-/// Curse of Obsession: trigger fires at enchanted player's draw step (draw 2 extra).
-/// We verify the curse is properly set up. The draw-step trigger requires the
-/// full turn pipeline.
+/// Curse of Obsession: "At the beginning of enchanted player's draw step, that
+/// player draws two additional cards." We drive through the draw step using
+/// `auto_advance_to_main_phase` from Untap and verify P1's hand grew by at
+/// least 3 (normal draw + 2 extra from the curse).
 #[test]
 fn curse_of_obsession_fires_at_draw_step() {
+    use engine::types::game_state::WaitingFor;
+
     let mut scenario = GameScenario::new();
-    scenario.at_phase(Phase::PreCombatMain);
+    scenario.at_phase(Phase::Untap);
 
     let curse_id = {
         let mut builder =
@@ -216,29 +219,48 @@ fn curse_of_obsession_fires_at_draw_step() {
         builder.id()
     };
 
-    for _ in 0..20 {
+    for _ in 0..30 {
         scenario.add_card_to_library_top(P0, "Plains");
         scenario.add_card_to_library_top(P1, "Island");
     }
 
     let mut runner = scenario.build();
+    runner.state_mut().turn_number = 2;
     runner.state_mut().active_player = P1;
     runner.state_mut().priority_player = P1;
+    runner.state_mut().waiting_for = WaitingFor::Priority { player: P1 };
 
     attach_to_player(runner.state_mut(), curse_id, P1);
     evaluate_layers(runner.state_mut());
     reindex_object_triggers(runner.state_mut(), curse_id);
 
-    // Verify the curse is properly set up.
-    let curse_obj = runner.state().objects.get(&curse_id);
+    let hand_before = runner
+        .state()
+        .players
+        .iter()
+        .find(|p| p.id == P1)
+        .expect("P1 exists")
+        .hand
+        .len();
+
+    // Drive through Untap -> Upkeep -> Draw -> PreCombatMain.
+    runner.auto_advance_to_main_phase();
+
+    let hand_after = runner
+        .state()
+        .players
+        .iter()
+        .find(|p| p.id == P1)
+        .expect("P1 exists")
+        .hand
+        .len();
+    let cards_drawn = hand_after.saturating_sub(hand_before);
+
+    // Normal draw = 1, curse adds 2 more = 3 total.
     assert!(
-        curse_obj.is_some(),
-        "Curse of Obsession must be on the battlefield"
-    );
-    assert_eq!(
-        curse_obj.unwrap().attached_to.and_then(|h| h.as_player()),
-        Some(P1),
-        "Curse of Obsession must be attached to P1"
+        cards_drawn >= 3,
+        "Curse of Obsession must cause enchanted player to draw 2 additional cards \
+         at draw step (expected >=3, got {cards_drawn})"
     );
 }
 

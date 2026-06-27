@@ -260,22 +260,49 @@ fn curse_of_stalked_prey_fires_on_combat_damage_to_enchanted_player() {
     );
 }
 
-/// Curse of Hospitality: static grants trample to creatures attacking enchanted player.
-/// Also has a combat-damage trigger. We verify the combat-damage trigger fires.
+/// Curse of Hospitality: "Whenever a creature deals combat damage to enchanted
+/// player, exile the top card of enchanted player's library."
+/// We verify the combat-damage trigger fires from the curse source and that
+/// P1's library shrinks (card exiled).
 #[test]
 fn curse_of_hospitality_fires_on_combat_damage() {
-    let (mut runner, _curse_id, attacker) =
+    let (mut runner, curse_id, attacker) =
         setup_attack_curse(CURSE_OF_HOSPITALITY, "Curse of Hospitality");
+
+    let lib_before = runner
+        .state()
+        .players
+        .iter()
+        .find(|p| p.id == P1)
+        .expect("P1 exists")
+        .library
+        .len();
 
     declare_attack_on_p1(&mut runner, attacker);
 
     // Drive through combat damage.
     runner.combat_damage();
 
-    // The combat-damage trigger should have fired or resolved.
-    // At minimum, P1 took combat damage.
+    // The combat-damage trigger from the curse must be on the stack or already
+    // resolved (exiling a card from P1's library).
+    let trigger_on_stack = stack_triggers_from(&runner, curse_id) >= 1;
+
+    // Resolve any remaining triggers.
+    runner.advance_until_stack_empty();
+
+    let lib_after = runner
+        .state()
+        .players
+        .iter()
+        .find(|p| p.id == P1)
+        .expect("P1 exists")
+        .library
+        .len();
+    let lib_shrunk = lib_after < lib_before;
+
     assert!(
-        runner.life(P1) < 20,
-        "enchanted player must take combat damage from attacker"
+        trigger_on_stack || lib_shrunk,
+        "Curse of Hospitality must trigger on combat damage to enchanted player \
+         (trigger_on_stack={trigger_on_stack}, lib_shrunk={lib_shrunk})"
     );
 }

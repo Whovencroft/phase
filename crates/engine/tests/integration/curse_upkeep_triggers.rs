@@ -124,10 +124,11 @@ fn curse_of_the_pierced_heart_fires_at_upkeep() {
 
     runner.advance_until_stack_empty();
 
-    // After resolution, enchanted player should lose 1 life.
-    assert!(
-        runner.life(P1) <= life_before,
-        "enchanted player's life must not increase from Curse of the Pierced Heart"
+    // After resolution, enchanted player must lose exactly 1 life.
+    assert_eq!(
+        runner.life(P1),
+        life_before - 1,
+        "Curse of the Pierced Heart must deal exactly 1 damage to enchanted player at upkeep"
     );
 }
 

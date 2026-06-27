@@ -140,9 +140,13 @@ fn overwhelming_splendor_effect_ends_when_source_leaves() {
 }
 
 /// Curse of Exhaustion: enchanted player can't cast more than one spell per turn.
-/// This is a cast-restriction static effect. We verify the restriction is applied.
+/// We cast one spell as P1, then verify `can_cast_object_now` returns false for
+/// a second spell — proving the PerTurnCastLimit static is enforced.
 #[test]
 fn curse_of_exhaustion_restricts_enchanted_player() {
+    use engine::game::casting::can_cast_object_now;
+    use engine::types::mana::{ManaCost, ManaType, ManaUnit};
+
     let mut scenario = GameScenario::new();
     scenario.at_phase(Phase::PreCombatMain);
 
@@ -154,6 +158,35 @@ fn curse_of_exhaustion_restricts_enchanted_player() {
         builder.id()
     };
 
+    // P1 has two free instants.
+    let spell_1 = scenario
+        .add_spell_to_hand(P1, "Shock", true)
+        .with_mana_cost(ManaCost::Cost {
+            shards: vec![],
+            generic: 0,
+        })
+        .from_oracle_text("Shock deals 2 damage to any target.")
+        .id();
+    let spell_2 = scenario
+        .add_spell_to_hand(P1, "Lightning Bolt", true)
+        .with_mana_cost(ManaCost::Cost {
+            shards: vec![],
+            generic: 0,
+        })
+        .from_oracle_text("Lightning Bolt deals 3 damage to any target.")
+        .id();
+
+    // Target for the first spell.
+    let target = scenario.add_creature(P0, "Memnite", 1, 1).id();
+
+    // Give P1 mana.
+    let dummy = engine::types::identifiers::ObjectId(0);
+    let mana = vec![
+        ManaUnit::new(ManaType::Red, dummy, false, vec![]),
+        ManaUnit::new(ManaType::Red, dummy, false, vec![]),
+    ];
+    scenario.with_mana_pool(P1, mana);
+
     // Library padding.
     for _ in 0..10 {
         scenario.add_card_to_library_top(P0, "Plains");
@@ -161,21 +194,26 @@ fn curse_of_exhaustion_restricts_enchanted_player() {
     }
 
     let mut runner = scenario.build();
+    runner.state_mut().active_player = P1;
+    runner.state_mut().priority_player = P1;
+    runner.state_mut().waiting_for = engine::types::game_state::WaitingFor::Priority { player: P1 };
+
     attach_to_player(runner.state_mut(), curse, P1);
     evaluate_layers(runner.state_mut());
 
-    // Verify the restriction is active by checking the game state's cast restrictions.
-    // The engine synthesizes a `CastRestriction` for "can't cast more than one spell
-    // each turn" — we verify the curse is on the battlefield and attached.
-    let curse_obj = runner.state().objects.get(&curse);
+    // Before casting anything, P1 should be able to cast spell_2.
     assert!(
-        curse_obj.is_some(),
-        "Curse of Exhaustion must be on the battlefield"
+        can_cast_object_now(runner.state(), P1, spell_2),
+        "P1 must be able to cast the second spell BEFORE the first cast"
     );
-    assert_eq!(
-        curse_obj.unwrap().attached_to.and_then(|h| h.as_player()),
-        Some(P1),
-        "Curse of Exhaustion must be attached to P1"
+
+    // Cast the first spell.
+    runner.cast(spell_1).target_object(target).resolve();
+
+    // After casting one spell, P1 must NOT be able to cast the second.
+    assert!(
+        !can_cast_object_now(runner.state(), P1, spell_2),
+        "Curse of Exhaustion must prevent enchanted player from casting a second spell this turn"
     );
 }
 

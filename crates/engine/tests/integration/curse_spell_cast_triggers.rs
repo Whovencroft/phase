@@ -126,31 +126,29 @@ fn curse_of_vengeance_fires_on_spell_cast() {
 }
 
 /// Curse of Echoes: trigger fires when enchanted player casts an instant/sorcery.
+/// We use commit() to inspect the stack before resolution and verify the curse
+/// placed a trigger from its source_id.
 #[test]
 fn curse_of_echoes_fires_on_instant_cast() {
-    let (mut runner, _curse_id, spell_id, target) =
+    let (mut runner, curse_id, spell_id, target) =
         setup_spell_cast_curse(CURSE_OF_ECHOES, "Curse of Echoes");
 
-    // Cast the bolt — the trigger should fire.
-    // We use commit() to check the stack before resolution.
+    // Cast the bolt and inspect the stack before resolution.
     let commit = runner.cast(spell_id).target_object(target).commit();
 
-    // After committing the spell to the stack, pass priority to let the trigger
-    // fire. The trigger goes on the stack above the spell.
-    drop(commit);
+    // The commit driver passes priority until the spell is committed; at that
+    // point the cast-trigger from Curse of Echoes should already be on the
+    // stack (CR 601.2a: triggers fire on cast announcement).
+    let has_curse_trigger = commit
+        .state()
+        .stack
+        .iter()
+        .any(|entry| entry.source_id == curse_id);
 
-    // Check that the curse trigger is on the stack (it fires on cast, not resolution).
-    // The trigger may already have been processed during commit's priority passing.
-    // At minimum, verify the spell was cast successfully.
     assert!(
-        runner
-            .state()
-            .spells_cast_this_turn_by_player
-            .get(&P1)
-            .map(|v| v.len())
-            .unwrap_or(0)
-            >= 1,
-        "P1 must have cast at least one spell"
+        has_curse_trigger,
+        "Curse of Echoes must put a trigger from the curse source on the stack \
+         when enchanted player casts an instant or sorcery"
     );
 }
 
