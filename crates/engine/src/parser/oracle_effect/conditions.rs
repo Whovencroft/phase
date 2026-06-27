@@ -1183,7 +1183,8 @@ fn parse_target_color_condition(
     let (rest, (negated, use_lki)) = parse_target_anaphoric_tense_polarity(rest)?;
     let (rest, first_color) = nom_primitives::parse_color(rest)?;
     // CR 105.2: Disjunctive color condition — "white or blue" etc.
-    let (rest, second_color) = opt(preceded(tag(" or "), nom_primitives::parse_color)).parse(rest)?;
+    let (rest, second_color) =
+        opt(preceded(tag(" or "), nom_primitives::parse_color)).parse(rest)?;
     let filter = if let Some(c2) = second_color {
         TargetFilter::Or {
             filters: vec![
