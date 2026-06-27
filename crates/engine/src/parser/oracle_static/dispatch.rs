@@ -1927,6 +1927,13 @@ pub(crate) fn parse_static_line_inner(
         return Some(def);
     }
 
+    // --- "If an opponent would search a library, that player searches the top N cards" ---
+    // CR 701.23f + CR 614.1a: Aven Mindcensor class. Depth-limited search replacement
+    // modeled as a static ability that the search resolver checks at resolution time.
+    if let Some(def) = parse_search_library_top_n(&tp, &text) {
+        return Some(def);
+    }
+
     // --- "Triggered abilities <scope> can't cause you to sacrifice or exile <affected>" ---
     // CR 603.2 + CR 609.3: The Master, Multiplied class. Subject-scoped prohibition
     // where `cause` identifies whose triggered abilities are muzzled and `affected`

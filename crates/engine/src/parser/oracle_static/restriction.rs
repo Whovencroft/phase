@@ -477,6 +477,44 @@ pub(crate) fn parse_cant_search_library(tp: &TextPair<'_>, text: &str) -> Option
     )
 }
 
+/// CR 701.23f + CR 614.1a: Parse search-library depth-limit statics (Aven
+/// Mindcensor class).
+///
+/// Supported Oracle class:
+/// - "If an opponent would search a library, that player searches the top four
+///   cards of that library instead."
+///
+/// Emits `StaticMode::SearchLibraryTopN { depth, scope }` where `scope` is
+/// derived from the subject ("an opponent" → Opponents).
+pub(crate) fn parse_search_library_top_n(
+    tp: &TextPair<'_>,
+    text: &str,
+) -> Option<StaticDefinition> {
+    // Match: "if an opponent would search a library, that player searches the
+    // top <N> cards of that library instead."
+    let rest = nom_tag_tp(
+        tp,
+        "if an opponent would search a library, that player searches the top ",
+    )?;
+    // Parse the depth number.
+    let lower = rest.lower;
+    let (num_str, after_num) = lower.split_once(' ')?;
+    let depth: u32 = num_str.parse().ok()?;
+    // Expect "cards of that library instead." (with optional trailing period)
+    let expected = "cards of that library instead";
+    let after_num_trimmed = after_num.strip_suffix('.').unwrap_or(after_num);
+    if after_num_trimmed != expected {
+        return None;
+    }
+    Some(
+        StaticDefinition::new(StaticMode::SearchLibraryTopN {
+            depth,
+            scope: ProhibitionScope::Opponents,
+        })
+        .description(text.to_string()),
+    )
+}
+
 /// CR 603.2 + CR 609.3: Parse "Triggered abilities <scope> can't cause you to
 /// sacrifice or exile <affected>." statics (The Master, Multiplied class).
 ///

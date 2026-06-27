@@ -97,6 +97,24 @@ fn is_search_muzzled(state: &GameState, cause_controller: crate::types::player::
     false
 }
 
+/// CR 701.23f + CR 614.1a: Check if any active SearchLibraryTopN static on the
+/// battlefield limits the search depth for the given searcher. Returns the
+/// minimum depth among all applicable statics (multiple Aven Mindcensors stack
+/// to the smallest window), or `None` if no limit applies.
+fn search_depth_limit(state: &GameState, searcher_id: PlayerId) -> Option<usize> {
+    let mut min_depth: Option<usize> = None;
+    for (bf_obj, def) in crate::game::functioning_abilities::battlefield_active_statics(state) {
+        let StaticMode::SearchLibraryTopN { depth, ref scope } = def.mode else {
+            continue;
+        };
+        if prohibition_scope_matches_player(scope, searcher_id, bf_obj.id, state) {
+            let d = depth as usize;
+            min_depth = Some(min_depth.map_or(d, |existing| existing.min(d)));
+        }
+    }
+    min_depth
+}
+
 /// CR 608.2c: Validate a chosen card-id set against the search-selection
 /// constraint propagated from `Effect::SearchLibrary.selection_constraint`.
 /// Centralized here so the resolver, the engine submission guard, and the AI
@@ -403,6 +421,21 @@ pub fn resolve(
             _ => continue,
         };
         candidate_ids.extend(zone_objects.iter().copied());
+    }
+
+    // CR 701.23f + CR 614.1a: If a SearchLibraryTopN static is active and the
+    // searcher matches the scope, truncate the library portion of the candidate
+    // pool to the top `depth` cards. The library is stored top-first (index 0 =
+    // top of library), so we keep only the first `depth` entries from the library
+    // zone. Non-library zones (graveyard/hand) are unaffected.
+    if searched_library {
+        let depth_limit = search_depth_limit(state, searcher_id);
+        if let Some(depth) = depth_limit {
+            // Rebuild candidate_ids: keep only top `depth` library cards, plus
+            // all non-library zone cards.
+            let library_ids: Vec<_> = owner.library.iter().copied().take(depth).collect();
+            candidate_ids.retain(|id| library_ids.contains(id) || !owner.library.contains(id));
+        }
     }
 
     // CR 107.3a + CR 601.2b: Evaluate the filter with the resolving ability in

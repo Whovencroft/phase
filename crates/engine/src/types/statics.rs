@@ -780,6 +780,19 @@ pub enum StaticMode {
     CantSearchLibrary {
         cause: ProhibitionScope,
     },
+    /// CR 701.23f + CR 614.1a: "If an opponent would search a library, that
+    /// player searches the top N cards of that library instead." E.g., Aven
+    /// Mindcensor. Modeled as a static ability checked at search resolution
+    /// time — the search resolver truncates the candidate pool to the top
+    /// `depth` cards of the library when this static is active and the
+    /// searcher matches `scope`.
+    ///
+    /// `scope` = which players are affected (for Aven Mindcensor: `Opponents`).
+    /// `depth` = how many cards from the top are visible (for Aven Mindcensor: 4).
+    SearchLibraryTopN {
+        depth: u32,
+        scope: ProhibitionScope,
+    },
     /// CR 603.2 + CR 609.3: "Triggered abilities <scope> can't cause you to
     /// sacrifice or exile <affected>." E.g., The Master, Multiplied — triggered
     /// abilities you control can't cause you to sacrifice or exile creature
@@ -1815,6 +1828,7 @@ impl Hash for StaticMode {
             | StaticMode::CantBeActivated { .. }
             | StaticMode::CantActivateDuring { .. }
             | StaticMode::CantSearchLibrary { .. }
+            | StaticMode::SearchLibraryTopN { .. }
             | StaticMode::CantCauseSacrificeOrExile { .. }
             // CR 614.1c: data-carrying (CounterType + count); consumed by direct
             // match in change_zone.rs, never used as a HashMap key.
@@ -1851,6 +1865,7 @@ impl StaticMode {
             | StaticMode::CantBeCast { .. }
             | StaticMode::CantBeActivated { .. }
             | StaticMode::CantSearchLibrary { .. }
+            | StaticMode::SearchLibraryTopN { .. }
             | StaticMode::CantCauseSacrificeOrExile { .. }
             | StaticMode::CastWithFlash
             | StaticMode::GrantsExtraVote
@@ -1967,6 +1982,9 @@ impl fmt::Display for StaticMode {
             StaticMode::CantBeCast { who } => write!(f, "CantBeCast({who})"),
             StaticMode::CantBeActivated { who, .. } => write!(f, "CantBeActivated({who})"),
             StaticMode::CantSearchLibrary { cause } => write!(f, "CantSearchLibrary({cause})"),
+            StaticMode::SearchLibraryTopN { depth, scope } => {
+                write!(f, "SearchLibraryTopN({depth},{scope})")
+            }
             StaticMode::CantCauseSacrificeOrExile { cause } => {
                 write!(f, "CantCauseSacrificeOrExile({cause})")
             }
@@ -2732,6 +2750,20 @@ impl FromStr for StaticMode {
                     // CR 701.23: Round-trip of the scope identifier.
                     if let Ok(cause) = ProhibitionScope::from_str(inner) {
                         return Ok(StaticMode::CantSearchLibrary { cause });
+                    }
+                    return Ok(StaticMode::Other(other.to_string()));
+                } else if let Some(inner) = other
+                    .strip_prefix("SearchLibraryTopN(")
+                    .and_then(|s| s.strip_suffix(')'))
+                {
+                    // CR 701.23f: Round-trip of depth,scope pair.
+                    if let Some((depth_str, scope_str)) = inner.split_once(',') {
+                        if let (Ok(depth), Ok(scope)) = (
+                            depth_str.parse::<u32>(),
+                            ProhibitionScope::from_str(scope_str),
+                        ) {
+                            return Ok(StaticMode::SearchLibraryTopN { depth, scope });
+                        }
                     }
                     return Ok(StaticMode::Other(other.to_string()));
                 } else if let Some(inner) = other
@@ -3580,6 +3612,13 @@ mod tests {
             cause: ProhibitionScope::Opponents,
         };
         assert_eq!(mode.to_string(), "CantSearchLibrary(opponents)");
+
+        // CR 701.23f: SearchLibraryTopN display carries depth and scope.
+        let mode = StaticMode::SearchLibraryTopN {
+            depth: 4,
+            scope: ProhibitionScope::Opponents,
+        };
+        assert_eq!(mode.to_string(), "SearchLibraryTopN(4,opponents)");
 
         // CR 603.2g: SuppressTriggers display enumerates the event set.
         let mode = StaticMode::SuppressTriggers {
