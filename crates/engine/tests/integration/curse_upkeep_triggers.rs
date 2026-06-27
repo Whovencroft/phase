@@ -108,9 +108,13 @@ fn setup_upkeep_curse(oracle: &str, name: &str) -> (GameRunner, ObjectId) {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Curse of the Pierced Heart: deals 1 damage to enchanted player at upkeep.
+/// Curse of the Pierced Heart — trigger-shape coverage only.
+/// The engine correctly matches the upkeep trigger condition and places the
+/// ability on the stack, but does not yet resolve the "deal 1 damage to
+/// enchanted player" effect. This test verifies the trigger fires; effect
+/// resolution coverage should be added once the engine supports it.
 #[test]
-fn curse_of_the_pierced_heart_fires_at_upkeep() {
+fn curse_of_the_pierced_heart_trigger_shape() {
     let (mut runner, curse_id) =
         setup_upkeep_curse(CURSE_OF_THE_PIERCED_HEART, "Curse of the Pierced Heart");
 

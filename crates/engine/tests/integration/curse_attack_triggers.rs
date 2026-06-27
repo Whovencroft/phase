@@ -56,10 +56,6 @@ const CURSE_OF_THE_FORSAKEN: &str =
 const CURSE_OF_STALKED_PREY: &str =
     "Whenever a creature deals combat damage to enchanted player, put a +1/+1 counter on that creature.";
 
-const CURSE_OF_HOSPITALITY: &str =
-    "Creatures attacking enchanted player have trample.\n\
-     Whenever a creature deals combat damage to enchanted player, exile the top card of enchanted player's library. Until end of turn, that creature's controller may play that card and they may spend mana as though it were mana of any color to cast it.";
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -260,28 +256,6 @@ fn curse_of_stalked_prey_fires_on_combat_damage_to_enchanted_player() {
     );
 }
 
-/// Curse of Hospitality: "Whenever a creature deals combat damage to enchanted
-/// player, exile the top card of enchanted player's library."
-/// We verify that combat damage is dealt to the enchanted player (the
-/// precondition for the trigger) and that the curse is correctly attached.
-/// Full trigger/exile resolution depends on engine support for
-/// "deals combat damage to enchanted player" trigger patterns.
-#[test]
-fn curse_of_hospitality_fires_on_combat_damage() {
-    let (mut runner, _curse_id, attacker) =
-        setup_attack_curse(CURSE_OF_HOSPITALITY, "Curse of Hospitality");
-
-    let life_before = runner.life(P1);
-    declare_attack_on_p1(&mut runner, attacker);
-
-    // Drive through combat damage.
-    runner.combat_damage();
-    runner.advance_until_stack_empty();
-
-    // The 2/2 attacker must have dealt combat damage to P1 (enchanted player).
-    assert!(
-        runner.life(P1) < life_before,
-        "Combat damage must be dealt to enchanted player P1 (precondition for \
-         Curse of Hospitality trigger)"
-    );
-}
+// NOTE: Curse of Hospitality is not tested here because the engine does not
+// yet support the "deals combat damage to enchanted player" trigger pattern.
+// A test should be added once that trigger matcher is implemented.
