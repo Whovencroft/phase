@@ -496,10 +496,9 @@ pub(crate) fn parse_search_library_top_n(
         tp,
         "if an opponent would search a library, that player searches the top ",
     )?;
-    // Parse the depth number.
-    let lower = rest.lower;
-    let (num_str, after_num) = lower.split_once(' ')?;
-    let depth: u32 = num_str.parse().ok()?;
+    // Parse the depth number — Oracle text uses English words ("four"), not
+    // digits, so delegate to `parse_number` which handles both forms.
+    let (depth, after_num) = parse_number(rest.lower)?;
     // Expect "cards of that library instead." (with optional trailing period)
     let expected = "cards of that library instead";
     let after_num_trimmed = after_num.strip_suffix('.').unwrap_or(after_num);
