@@ -1185,22 +1185,18 @@ fn parse_target_color_condition(
     // CR 105.2: Disjunctive color condition — "white or blue" etc.
     let (rest, second_color) =
         opt(preceded(tag(" or "), nom_primitives::parse_color)).parse(rest)?;
-    let filter = if let Some(c2) = second_color {
-        TargetFilter::Or {
-            filters: vec![
-                TargetFilter::Typed(
-                    TypedFilter::default()
-                        .properties(vec![FilterProp::HasColor { color: first_color }]),
-                ),
-                TargetFilter::Typed(
-                    TypedFilter::default().properties(vec![FilterProp::HasColor { color: c2 }]),
-                ),
-            ],
-        }
+    let mut filters: Vec<_> = std::iter::once(first_color)
+        .chain(second_color)
+        .map(|color| {
+            TargetFilter::Typed(
+                TypedFilter::default().properties(vec![FilterProp::HasColor { color }]),
+            )
+        })
+        .collect();
+    let filter = if filters.len() > 1 {
+        TargetFilter::Or { filters }
     } else {
-        TargetFilter::Typed(
-            TypedFilter::default().properties(vec![FilterProp::HasColor { color: first_color }]),
-        )
+        filters.pop().unwrap()
     };
     Ok((
         rest,
