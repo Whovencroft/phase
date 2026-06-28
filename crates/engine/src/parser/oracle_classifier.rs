@@ -577,6 +577,15 @@ fn is_static_compound_pattern(lower: &str) -> bool {
     if scan_contains(lower, "face a villainous choice") && scan_contains(lower, "additional time") {
         return true;
     }
+    // CR 701.23f + CR 614.1a: "If an opponent would search a library, that player
+    // searches the top N cards of that library instead." (Aven Mindcensor class).
+    // Contains "would " so is_replacement_pattern fires, but this is a depth-
+    // limited search static (`StaticMode::SearchLibraryTopN`), not a replacement
+    // definition. Route to Priority 7 static dispatch so parse_search_library_top_n
+    // can claim it.
+    if scan_contains(lower, "would search a library") && scan_contains(lower, "searches the top") {
+        return true;
+    }
     false
 }
 
