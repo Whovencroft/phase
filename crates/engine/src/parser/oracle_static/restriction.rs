@@ -501,6 +501,7 @@ pub(crate) fn parse_search_library_top_n(
     let (depth, after_num) = parse_number(rest.lower)?;
     // Expect "cards of that library instead." (with optional trailing period)
     let expected = "cards of that library instead";
+    // allow-noncombinator: trailing-period cleanup on pre-tokenized remainder
     let after_num_trimmed = after_num.strip_suffix('.').unwrap_or(after_num);
     if after_num_trimmed != expected {
         return None;
