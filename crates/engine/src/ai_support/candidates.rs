@@ -1460,7 +1460,7 @@ pub fn candidate_actions_broad_with_probe(
         // with the player who is authorized to submit it; otherwise the
         // action gets routed to the wrong AI seat in multiplayer. The
         // `actor` field is always set to the authorized submitter.
-        // CR 601.2: AI opponent choice for pile separation — offer each
+        // CR 608.2d + CR 700.3: AI opponent choice for pile separation — offer each
         // candidate opponent as a legal action.
         WaitingFor::SeparatePilesChooseOpponent {
             player, candidates, ..
