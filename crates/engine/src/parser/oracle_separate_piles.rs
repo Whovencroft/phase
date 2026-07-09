@@ -287,8 +287,13 @@ fn parse_pile_disposition_sentence(input: &str) -> Option<(Zone, Zone)> {
         value((), tag_no_case(" and the rest into your ")).parse(rest);
     let (rest, ()) = res.ok()?;
     let (rest, unchosen_zone) = parse_zone_name(rest)?;
-    // Optional trailing period.
-    let _ = rest.trim_start_matches('.');
+    // Only allow optional trailing period/whitespace then EOF; reject any
+    // remaining rules text so cards with riders are not marked supported.
+    let rest = rest.trim_start_matches('.');
+    let rest = rest.trim();
+    if !rest.is_empty() {
+        return None;
+    }
     Some((chosen_zone, unchosen_zone))
 }
 
