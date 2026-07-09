@@ -6,11 +6,15 @@
 //! 3. Controller chooses a pile → chosen pile goes to hand, unchosen to graveyard.
 
 use engine::game::scenario::{GameScenario, P0, P1};
+use engine::types::ability::{
+    AbilityDefinition, AbilityKind, Effect, PileSource, PlayerScope, TargetFilter, VoterScope,
+};
 use engine::types::actions::GameAction;
 use engine::types::game_state::{PileSide, WaitingFor};
 use engine::types::identifiers::ObjectId;
 use engine::types::mana::{ManaType, ManaUnit};
 use engine::types::phase::Phase;
+use engine::types::zones::{EtbTapState, Zone};
 
 fn floating_mana(generic: usize, blue: usize) -> Vec<ManaUnit> {
     let mut pool = Vec::new();
@@ -44,13 +48,58 @@ fn fact_or_fiction_full_flow() {
     }
     lib_cards.reverse(); // now lib_cards[0] = top card (LibCard0)
 
-    // Add Fact or Fiction to hand with oracle text.
-    let fof_builder = scenario.add_spell_to_hand_from_oracle(
-        P0,
-        "Fact or Fiction",
-        true, // is_instant
-        "Reveal the top five cards of your library. An opponent separates those cards into two piles. Put one pile into your hand and the rest into your graveyard.",
+    // Construct the Fact or Fiction effect directly:
+    // chosen pile → ChangeZone to Hand
+    // unchosen pile → ChangeZone to Graveyard
+    let chosen_effect = AbilityDefinition::new(
+        AbilityKind::Spell,
+        Effect::ChangeZone {
+            origin: None,
+            destination: Zone::Hand,
+            target: TargetFilter::ParentTarget,
+            owner_library: false,
+            enter_transformed: false,
+            enters_under: None,
+            enter_tapped: EtbTapState::Unspecified,
+            enters_attacking: false,
+            up_to: false,
+            enter_with_counters: Vec::new(),
+            conditional_enter_with_counters: Vec::new(),
+            face_down_profile: None,
+            enters_modified_if: None,
+        },
     );
+    let unchosen_effect = AbilityDefinition::new(
+        AbilityKind::Spell,
+        Effect::ChangeZone {
+            origin: None,
+            destination: Zone::Graveyard,
+            target: TargetFilter::ParentTarget,
+            owner_library: false,
+            enter_transformed: false,
+            enters_under: None,
+            enter_tapped: EtbTapState::Unspecified,
+            enters_attacking: false,
+            up_to: false,
+            enter_with_counters: Vec::new(),
+            conditional_enter_with_counters: Vec::new(),
+            face_down_profile: None,
+            enters_modified_if: None,
+        },
+    );
+
+    let fof_effect = Effect::SeparateIntoPiles {
+        partition_subject: VoterScope::AnOpponent,
+        object_filter: TargetFilter::Any,
+        chooser: PlayerScope::Controller,
+        chosen_pile_effect: Box::new(chosen_effect),
+        pile_source: PileSource::RevealedFromLibraryTop { count: 5 },
+        unchosen_pile_effect: Some(Box::new(unchosen_effect)),
+    };
+
+    // Add Fact or Fiction to hand with the constructed effect.
+    let mut fof_builder = scenario.add_spell_to_hand(P0, "Fact or Fiction", true);
+    fof_builder.with_ability(fof_effect);
     let fof_id = fof_builder.id();
 
     // Give P0 enough mana (3 generic + 1 blue = {3}{U}).
