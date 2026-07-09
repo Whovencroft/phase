@@ -1563,7 +1563,7 @@ export type WaitingFor =
   // CR 601.2: Controller chooses which opponent separates piles (multiplayer).
   | { type: "SeparatePilesChooseOpponent"; data: {
       player: PlayerId;
-      opponents: PlayerId[];
+      candidates: PlayerId[];
       source_id: ObjectId;
     } }
   // partitioner (subject); pile B is derived engine-side as
