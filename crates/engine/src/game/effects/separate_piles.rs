@@ -181,7 +181,7 @@ fn resolve_revealed_from_library_top(
 ) -> Result<(), EffectError> {
     let controller = ability.controller;
 
-    // CR 401.5: If a library has fewer cards than required, use as many as available.
+    // CR 609.3: If an effect attempts to do something impossible, it does only as much as possible.
     let player = state
         .players
         .iter()

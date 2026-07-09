@@ -12650,7 +12650,7 @@ pub enum VoterScope {
     /// votes. The controller does not vote — they receive per-choice
     /// sub-effects via `PlayerFilter::VotedFor` against the recorded ballots.
     EachOpponent,
-    /// CR 700.3 + CR 601.2: A single opponent (chosen or determined at
+    /// CR 700.3 + CR 608.2d: A single opponent (chosen or determined at
     /// resolution) performs the pile separation. Used by Fact or Fiction.
     AnOpponent,
     /// CR 101.4 + CR 608.2: Battlebond's friend-or-foe keyword action has
