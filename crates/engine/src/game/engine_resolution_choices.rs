@@ -1682,6 +1682,7 @@ pub(super) fn handle_resolution_choice(
                 mut completed,
                 chooser,
                 chosen_pile_effect,
+                unchosen_pile_effect,
                 source_id,
             },
             GameAction::SubmitPilePartition { pile_a },
@@ -1723,6 +1724,7 @@ pub(super) fn handle_resolution_choice(
                     completed,
                     chooser,
                     chosen_pile_effect,
+                    unchosen_pile_effect: unchosen_pile_effect.clone(),
                     source_id,
                 };
                 ResolutionChoiceOutcome::WaitingFor(state.waiting_for.clone())
@@ -1734,6 +1736,7 @@ pub(super) fn handle_resolution_choice(
                     pending,
                     current,
                     chosen_pile_effect,
+                    unchosen_pile_effect,
                     source_id,
                 };
                 ResolutionChoiceOutcome::WaitingFor(state.waiting_for.clone())
@@ -1751,6 +1754,7 @@ pub(super) fn handle_resolution_choice(
                 mut pending,
                 current,
                 chosen_pile_effect,
+                unchosen_pile_effect,
                 source_id,
             },
             GameAction::ChoosePile { pile },
@@ -1764,15 +1768,26 @@ pub(super) fn handle_resolution_choice(
                 state,
                 source_id,
                 &chosen_pile_effect,
-                &[(current, pile)],
+                &[(current.clone(), pile)],
                 events,
             );
+            // CR 608.2c: Apply unchosen pile sub-effect if present.
+            if let Some(ref unchosen_def) = unchosen_pile_effect {
+                let _ = effects::separate_piles::apply_unchosen_pile_effect(
+                    state,
+                    source_id,
+                    unchosen_def,
+                    &[(current, pile)],
+                    events,
+                );
+            }
             if let Some(next) = pending.pop_front() {
                 state.waiting_for = WaitingFor::SeparatePilesChoice {
                     player,
                     pending,
                     current: next,
                     chosen_pile_effect,
+                    unchosen_pile_effect,
                     source_id,
                 };
                 ResolutionChoiceOutcome::WaitingFor(state.waiting_for.clone())

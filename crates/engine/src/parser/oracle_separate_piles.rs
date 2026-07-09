@@ -86,6 +86,8 @@ pub(crate) fn parse_separate_into_piles(
             object_filter: TargetFilter::Typed(TypedFilter::new(TypeFilter::Creature)),
             chooser,
             chosen_pile_effect: Box::new(sub_def),
+            pile_source: crate::types::ability::PileSource::Battlefield,
+            unchosen_pile_effect: None,
         },
     ))
 }

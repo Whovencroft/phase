@@ -4584,6 +4584,8 @@ pub enum WaitingFor {
         /// CR 608.2c: Sub-effect applied to each chosen pile, once per
         /// object, with the subject rebound as controller.
         chosen_pile_effect: Box<super::ability::AbilityDefinition>,
+        /// CR 608.2c: Optional sub-effect applied to each unchosen pile object.
+        unchosen_pile_effect: Option<Box<super::ability::AbilityDefinition>>,
         /// Source ability's object ID — for logging and state filter echoes.
         source_id: ObjectId,
     },
@@ -4604,6 +4606,8 @@ pub enum WaitingFor {
         /// CR 608.2c: Sub-effect applied to each chosen pile, once per
         /// object, with the subject rebound as controller.
         chosen_pile_effect: Box<super::ability::AbilityDefinition>,
+        /// CR 608.2c: Optional sub-effect applied to each unchosen pile object.
+        unchosen_pile_effect: Option<Box<super::ability::AbilityDefinition>>,
         /// Source ability's object ID — for logging and state filter echoes.
         source_id: ObjectId,
     },
