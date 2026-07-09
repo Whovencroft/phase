@@ -166,7 +166,7 @@ fn resolve_battlefield(
     Ok(())
 }
 
-/// CR 700.3 + CR 601.2: RevealedFromLibraryTop pile source — the Fact or Fiction
+/// CR 700.3 + CR 608.2d: RevealedFromLibraryTop pile source — the Fact or Fiction
 /// path. Reveal top N cards, an opponent separates them into two piles, controller
 /// chooses one pile.
 #[allow(clippy::too_many_arguments)]
@@ -214,7 +214,7 @@ fn resolve_revealed_from_library_top(
         card_names,
     });
 
-    // CR 601.2: "An opponent" — the controller chooses which opponent
+    // CR 608.2d + CR 700.3: "An opponent" — the controller chooses which opponent
     // performs the partition. With a single opponent the choice is trivial.
     let candidates: Vec<PlayerId> = state
         .players

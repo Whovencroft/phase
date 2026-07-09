@@ -183,7 +183,7 @@ fn rewrite_sub_effect_target_to_parent(effect: &mut Effect) {
     }
 }
 
-/// CR 700.3 + CR 701.16a: Parse the "Reveal the top N cards ... An opponent
+/// CR 700.3 + CR 701.20a: Parse the "Reveal the top N cards ... An opponent
 /// separates ... Put one pile into [zone] and the rest into [zone]" shape.
 /// Builds for the class: any reveal-top-N → opponent-separates → zone-routing
 /// card (Fact or Fiction, Steam Augury, Epiphany at the Drownyard, etc.).
@@ -224,7 +224,7 @@ fn try_parse_reveal_separate(text: &str, kind: AbilityKind) -> Option<AbilityDef
 
 /// Parse "Reveal the top N cards of your library." — returns remainder and count.
 fn parse_reveal_top_sentence(input: &str) -> Option<(&str, u32)> {
-    // CR 701.16a: "Reveal" is a keyword action.
+    // CR 701.20a: "Reveal" is a keyword action.
     let res: nom::IResult<&str, &str, OracleError<'_>> =
         tag_no_case("reveal the top ").parse(input);
     let (rest, _) = res.ok()?;
@@ -362,7 +362,7 @@ mod tests {
         }
     }
 
-    /// CR 700.3 + CR 701.16a: Fact or Fiction Oracle text parses to a
+    /// CR 700.3 + CR 701.20a: Fact or Fiction Oracle text parses to a
     /// `SeparateIntoPiles` with `RevealedFromLibraryTop { count: 5 }`,
     /// `AnOpponent` partition, `Controller` chooser, ChangeZone(Hand)
     /// chosen sub-effect, and ChangeZone(Graveyard) unchosen sub-effect.

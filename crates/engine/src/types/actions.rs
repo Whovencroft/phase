@@ -169,7 +169,7 @@ pub enum GameAction {
     ChooseClashOpponent {
         opponent: PlayerId,
     },
-    /// CR 601.2 + CR 700.3: "An opponent separates" — the controller's answer
+    /// CR 608.2d + CR 700.3: "An opponent separates" — the controller's answer
     /// to `WaitingFor::SeparatePilesChooseOpponent`.
     ChoosePileOpponent {
         opponent: PlayerId,

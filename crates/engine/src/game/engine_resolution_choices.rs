@@ -1668,7 +1668,7 @@ pub(super) fn handle_resolution_choice(
                 },
             )
         }
-        // CR 601.2 + CR 700.3: Controller chose which opponent performs the
+        // CR 608.2d + CR 700.3: Controller chose which opponent performs the
         // partition. Validate the choice and transition to SeparatePilesPartition.
         (
             WaitingFor::SeparatePilesChooseOpponent {

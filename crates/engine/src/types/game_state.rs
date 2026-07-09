@@ -4555,7 +4555,7 @@ pub enum WaitingFor {
         #[serde(default)]
         visibility: super::ability::VoteVisibility,
     },
-    /// CR 601.2 + CR 700.3: "An opponent separates" — in multiplayer the
+    /// CR 608.2d + CR 700.3: "An opponent separates" — in multiplayer the
     /// controller chooses which opponent will perform the partition. With a
     /// single opponent this state is skipped (no decision). The chosen
     /// opponent feeds into [`Self::SeparatePilesPartition`].

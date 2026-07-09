@@ -1560,7 +1560,7 @@ export type WaitingFor =
   | { type: "CopyRetarget"; data: { player: PlayerId; copy_id: ObjectId; target_slots: CopyTargetSlot[]; current_slot?: number } }
   // CR 700.3 + CR 700.3a: Subject is partitioning their own eligible objects
   // into two piles for an `Effect::SeparateIntoPiles`. `player` is the
-  // CR 601.2: Controller chooses which opponent separates piles (multiplayer).
+  // CR 608.2d + CR 700.3: Controller chooses which opponent separates piles (multiplayer).
   | { type: "SeparatePilesChooseOpponent"; data: {
       player: PlayerId;
       candidates: PlayerId[];
