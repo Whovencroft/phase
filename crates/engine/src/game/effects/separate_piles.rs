@@ -214,26 +214,42 @@ fn resolve_revealed_from_library_top(
         card_names,
     });
 
-    // CR 601.2: "An opponent" — pick the first non-eliminated opponent in APNAP order.
-    let partitioner = state
+    // CR 601.2: "An opponent" — the controller chooses which opponent
+    // performs the partition. With a single opponent the choice is trivial.
+    let candidates: Vec<PlayerId> = state
         .players
         .iter()
-        .find(|p| p.id != controller && !p.is_eliminated)
+        .filter(|p| p.id != controller && !p.is_eliminated)
         .map(|p| p.id)
-        .unwrap_or(controller);
+        .collect();
 
     let eligible: crate::im::Vector<ObjectId> = revealed_ids.into_iter().collect();
 
-    state.waiting_for = WaitingFor::SeparatePilesPartition {
-        player: partitioner,
-        eligible,
-        remaining_subjects: crate::im::Vector::new(),
-        completed: crate::im::Vector::new(),
-        chooser: chooser_id,
-        chosen_pile_effect: Box::new(chosen_pile_effect.clone()),
-        unchosen_pile_effect: unchosen_pile_effect.clone(),
-        source_id: ability.source_id,
-    };
+    if candidates.len() >= 2 {
+        // Multiplayer: surface a choice prompt for the controller.
+        state.waiting_for = WaitingFor::SeparatePilesChooseOpponent {
+            player: controller,
+            candidates,
+            eligible,
+            chooser: chooser_id,
+            chosen_pile_effect: Box::new(chosen_pile_effect.clone()),
+            unchosen_pile_effect: unchosen_pile_effect.clone(),
+            source_id: ability.source_id,
+        };
+    } else {
+        // Two-player game: single opponent, no decision needed.
+        let partitioner = candidates.into_iter().next().unwrap_or(controller);
+        state.waiting_for = WaitingFor::SeparatePilesPartition {
+            player: partitioner,
+            eligible,
+            remaining_subjects: crate::im::Vector::new(),
+            completed: crate::im::Vector::new(),
+            chooser: chooser_id,
+            chosen_pile_effect: Box::new(chosen_pile_effect.clone()),
+            unchosen_pile_effect: unchosen_pile_effect.clone(),
+            source_id: ability.source_id,
+        };
+    }
 
     Ok(())
 }

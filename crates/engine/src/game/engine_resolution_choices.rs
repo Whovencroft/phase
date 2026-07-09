@@ -139,6 +139,7 @@ pub(super) fn handles(waiting_for: &WaitingFor) -> bool {
             | WaitingFor::ClashChooseOpponent { .. }
             | WaitingFor::ClashCardPlacement { .. }
             | WaitingFor::VoteChoice { .. }
+            | WaitingFor::SeparatePilesChooseOpponent { .. }
             | WaitingFor::SeparatePilesPartition { .. }
             | WaitingFor::SeparatePilesChoice { .. }
             | WaitingFor::DigChoice { .. }
@@ -1666,6 +1667,37 @@ pub(super) fn handle_resolution_choice(
                     visibility,
                 },
             )
+        }
+        // CR 601.2 + CR 700.3: Controller chose which opponent performs the
+        // partition. Validate the choice and transition to SeparatePilesPartition.
+        (
+            WaitingFor::SeparatePilesChooseOpponent {
+                player: _,
+                candidates,
+                eligible,
+                chooser,
+                chosen_pile_effect,
+                unchosen_pile_effect,
+                source_id,
+            },
+            GameAction::ChoosePileOpponent { opponent },
+        ) => {
+            if !candidates.contains(&opponent) {
+                return Err(EngineError::InvalidAction(format!(
+                    "Chosen pile opponent {opponent:?} is not a legal opponent"
+                )));
+            }
+            state.waiting_for = WaitingFor::SeparatePilesPartition {
+                player: opponent,
+                eligible,
+                remaining_subjects: crate::im::Vector::new(),
+                completed: crate::im::Vector::new(),
+                chooser,
+                chosen_pile_effect,
+                unchosen_pile_effect,
+                source_id,
+            };
+            ResolutionChoiceOutcome::WaitingFor(state.waiting_for.clone())
         }
         // CR 700.3 + CR 700.3a + CR 101.4: Subject submits their partition;
         // pile B is derived as `eligible \ pile_a`. Advance the subject queue
