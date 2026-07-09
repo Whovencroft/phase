@@ -81,7 +81,7 @@ fn resolve_battlefield(
     partition_subject: &VoterScope,
     object_filter: &crate::types::ability::TargetFilter,
     chooser_id: PlayerId,
-    chosen_pile_effect: &Box<crate::types::ability::AbilityDefinition>,
+    chosen_pile_effect: &crate::types::ability::AbilityDefinition,
     unchosen_pile_effect: &Option<Box<crate::types::ability::AbilityDefinition>>,
 ) -> Result<(), EffectError> {
     let controller = ability.controller;
@@ -158,7 +158,7 @@ fn resolve_battlefield(
         remaining_subjects,
         completed,
         chooser: chooser_id,
-        chosen_pile_effect: chosen_pile_effect.clone(),
+        chosen_pile_effect: Box::new(chosen_pile_effect.clone()),
         unchosen_pile_effect: unchosen_pile_effect.clone(),
         source_id: ability.source_id,
     };
@@ -176,7 +176,7 @@ fn resolve_revealed_from_library_top(
     events: &mut Vec<GameEvent>,
     count: u32,
     chooser_id: PlayerId,
-    chosen_pile_effect: &Box<crate::types::ability::AbilityDefinition>,
+    chosen_pile_effect: &crate::types::ability::AbilityDefinition,
     unchosen_pile_effect: &Option<Box<crate::types::ability::AbilityDefinition>>,
 ) -> Result<(), EffectError> {
     let controller = ability.controller;
@@ -230,7 +230,7 @@ fn resolve_revealed_from_library_top(
         remaining_subjects: crate::im::Vector::new(),
         completed: crate::im::Vector::new(),
         chooser: chooser_id,
-        chosen_pile_effect: chosen_pile_effect.clone(),
+        chosen_pile_effect: Box::new(chosen_pile_effect.clone()),
         unchosen_pile_effect: unchosen_pile_effect.clone(),
         source_id: ability.source_id,
     };

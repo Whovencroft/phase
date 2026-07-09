@@ -31,7 +31,7 @@ fn floating_mana(generic: usize, blue: usize) -> Vec<ManaUnit> {
 /// Full Fact or Fiction flow: reveal 5, opponent separates, controller picks pile A.
 #[test]
 fn fact_or_fiction_full_flow() {
-    let mut scenario = GameScenario::new(42);
+    let mut scenario = GameScenario::new();
     scenario.at_phase(Phase::PreCombatMain);
 
     // Seed library with 5 known cards (top to bottom: C0..C4).
