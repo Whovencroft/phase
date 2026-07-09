@@ -301,7 +301,7 @@ fn parse_zone_name(input: &str) -> Option<(&str, Zone)> {
         value(Zone::Exile, tag_no_case("exile")),
     ))
     .parse(input);
-    res.ok().map(|(rest, zone)| (rest, zone))
+    res.ok()
 }
 
 /// Build a minimal `Effect::ChangeZone` for pile sub-effects. The target is
