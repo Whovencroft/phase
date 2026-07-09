@@ -1,20 +1,17 @@
 //! Integration test: Fact or Fiction pile-separation flow.
 //!
-//! Verifies the `PileSource::RevealedFromLibraryTop` path end-to-end:
-//! 1. Cast Fact or Fiction → top 5 cards revealed.
-//! 2. An opponent separates them into two piles.
-//! 3. Controller chooses a pile → chosen pile goes to hand, unchosen to graveyard.
+//! Verifies the production Oracle parser path end-to-end:
+//! 1. Parse Fact or Fiction Oracle text → `SeparateIntoPiles` effect.
+//! 2. Cast it → top 5 cards revealed.
+//! 3. An opponent separates them into two piles.
+//! 4. Controller chooses a pile → chosen pile goes to hand, unchosen to graveyard.
 
 use engine::game::scenario::{GameScenario, P0, P1};
-use engine::types::ability::{
-    AbilityDefinition, AbilityKind, Effect, PileSource, PlayerScope, TargetFilter, VoterScope,
-};
 use engine::types::actions::GameAction;
 use engine::types::game_state::{PileSide, WaitingFor};
 use engine::types::identifiers::ObjectId;
 use engine::types::mana::{ManaType, ManaUnit};
 use engine::types::phase::Phase;
-use engine::types::zones::{EtbTapState, Zone};
 
 fn floating_mana(generic: usize, blue: usize) -> Vec<ManaUnit> {
     let mut pool = Vec::new();
@@ -32,7 +29,7 @@ fn floating_mana(generic: usize, blue: usize) -> Vec<ManaUnit> {
     pool
 }
 
-/// Full Fact or Fiction flow: reveal 5, opponent separates, controller picks pile A.
+/// Full Fact or Fiction flow driven through the production Oracle parser.
 #[test]
 fn fact_or_fiction_full_flow() {
     let mut scenario = GameScenario::new();
@@ -48,58 +45,14 @@ fn fact_or_fiction_full_flow() {
     }
     lib_cards.reverse(); // now lib_cards[0] = top card (LibCard0)
 
-    // Construct the Fact or Fiction effect directly:
-    // chosen pile → ChangeZone to Hand
-    // unchosen pile → ChangeZone to Graveyard
-    let chosen_effect = AbilityDefinition::new(
-        AbilityKind::Spell,
-        Effect::ChangeZone {
-            origin: None,
-            destination: Zone::Hand,
-            target: TargetFilter::ParentTarget,
-            owner_library: false,
-            enter_transformed: false,
-            enters_under: None,
-            enter_tapped: EtbTapState::Unspecified,
-            enters_attacking: false,
-            up_to: false,
-            enter_with_counters: Vec::new(),
-            conditional_enter_with_counters: Vec::new(),
-            face_down_profile: None,
-            enters_modified_if: None,
-        },
-    );
-    let unchosen_effect = AbilityDefinition::new(
-        AbilityKind::Spell,
-        Effect::ChangeZone {
-            origin: None,
-            destination: Zone::Graveyard,
-            target: TargetFilter::ParentTarget,
-            owner_library: false,
-            enter_transformed: false,
-            enters_under: None,
-            enter_tapped: EtbTapState::Unspecified,
-            enters_attacking: false,
-            up_to: false,
-            enter_with_counters: Vec::new(),
-            conditional_enter_with_counters: Vec::new(),
-            face_down_profile: None,
-            enters_modified_if: None,
-        },
-    );
-
-    let fof_effect = Effect::SeparateIntoPiles {
-        partition_subject: VoterScope::AnOpponent,
-        object_filter: TargetFilter::Any,
-        chooser: PlayerScope::Controller,
-        chosen_pile_effect: Box::new(chosen_effect),
-        pile_source: PileSource::RevealedFromLibraryTop { count: 5 },
-        unchosen_pile_effect: Some(Box::new(unchosen_effect)),
-    };
-
-    // Add Fact or Fiction to hand with the constructed effect.
-    let mut fof_builder = scenario.add_spell_to_hand(P0, "Fact or Fiction", true);
-    fof_builder.with_ability(fof_effect);
+    // Use the Oracle parser path — the production card-data pipeline parses
+    // this exact text into Effect::SeparateIntoPiles with
+    // PileSource::RevealedFromLibraryTop { count: 5 }.
+    let oracle_text = "Reveal the top five cards of your library. \
+                       An opponent separates those cards into two piles. \
+                       Put one pile into your hand and the rest into your graveyard.";
+    let fof_builder =
+        scenario.add_spell_to_hand_from_oracle(P0, "Fact or Fiction", true, oracle_text);
     let fof_id = fof_builder.id();
 
     // Give P0 enough mana (3 generic + 1 blue = {3}{U}).

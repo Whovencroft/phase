@@ -1796,22 +1796,26 @@ pub(super) fn handle_resolution_choice(
             // subject's choice or finish. Per-decision resolution matches
             // CR 101.4c ("in any order they choose") — the chooser's
             // submission order IS that order.
-            let _ = effects::separate_piles::apply_pile_effect(
+            effects::separate_piles::apply_pile_effect(
                 state,
                 source_id,
                 &chosen_pile_effect,
                 &[(current.clone(), pile)],
                 events,
-            );
+            )
+            .map_err(|e| EngineError::InvalidAction(format!("pile sub-effect: {e:?}")))?;
             // CR 608.2c: Apply unchosen pile sub-effect if present.
             if let Some(ref unchosen_def) = unchosen_pile_effect {
-                let _ = effects::separate_piles::apply_unchosen_pile_effect(
+                effects::separate_piles::apply_unchosen_pile_effect(
                     state,
                     source_id,
                     unchosen_def,
                     &[(current, pile)],
                     events,
-                );
+                )
+                .map_err(|e| {
+                    EngineError::InvalidAction(format!("unchosen pile sub-effect: {e:?}"))
+                })?;
             }
             if let Some(next) = pending.pop_front() {
                 state.waiting_for = WaitingFor::SeparatePilesChoice {
