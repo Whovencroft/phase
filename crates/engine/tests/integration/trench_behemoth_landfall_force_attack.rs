@@ -330,8 +330,31 @@ fn trench_behemoth_e2e_landfall_forces_attack_then_expires() {
          (parse → resolve → MustAttack pipeline)"
     );
 
-    // ── Step 4: Advance past combat; assert requirement expired ────────
-    runner.advance_to_phase(Phase::PostCombatMain);
+    // ── Step 4: Declare the forced attacker and drive through combat ────
+    // The creature is forced to attack P0 (the only opponent).
+    use engine::game::combat::AttackTarget;
+    runner
+        .declare_attackers(&[(target, AttackTarget::Player(P0))])
+        .expect("forced creature should be able to declare attack");
+
+    // Drive through DeclareBlockers → CombatDamage → EndCombat → PostCombatMain.
+    // combat_damage() passes priority through the remaining combat steps until
+    // EndCombat or PostCombatMain, which triggers the pruner (CR 511.3).
+    runner.combat_damage();
+
+    // If we're not yet at PostCombatMain, pass priority to get there.
+    for _ in 0..16 {
+        if runner.state().phase == Phase::PostCombatMain {
+            break;
+        }
+        if matches!(runner.state().waiting_for, WaitingFor::OrderTriggers { .. }) {
+            drain_order_triggers_with_identity(runner.state_mut());
+            continue;
+        }
+        if runner.act(GameAction::PassPriority).is_err() {
+            break;
+        }
+    }
 
     // CR 511.3: the pruner fires at EndCombat, removing the effect.
     assert!(
