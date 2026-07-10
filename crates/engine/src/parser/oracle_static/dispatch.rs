@@ -3430,3 +3430,55 @@ fn parse_enters_with_additional_counters(
         .description(text.to_string()),
     )
 }
+
+/// Parses the Odyssey Burst-cycle graveyard name-aliasing static:
+/// "If ~ is in a graveyard, effects from spells named X count it as
+/// a card named X." — Odyssey Burst cycle (Diligent Farmhand, Pardic Firecat,
+/// Flame-Kin Zealot, etc.).
+///
+/// Returns a `StaticDefinition` with `StaticMode::CountsAsNamed { name }` and
+/// `active_zones = [Graveyard]`.
+pub(crate) fn try_parse_counts_as_named_static(text: &str) -> Option<StaticDefinition> {
+    use super::prelude::*;
+    // Normalize: lowercase for matching, strip trailing period.
+    let lower = text.to_lowercase();
+    // allow-noncombinator: punctuation cleanup on pre-tokenized input (char arg)
+    let lower = lower.trim_end_matches('.').trim();
+    // Parse the fixed structure using nom combinators:
+    // "if ~ is in a graveyard, effects from spells named <NAME> count it as a card named <NAME>"
+    let (rest, _) = tag::<_, _, OracleError<'_>>("if ~ is in a graveyard, ")
+        .parse(lower)
+        .ok()?;
+    let (rest, _) = tag::<_, _, OracleError<'_>>("effects from spells named ")
+        .parse(rest)
+        .ok()?;
+    // Split on " count it as a card named " to extract the spell name and alias.
+    let (alias_name, spell_name) = terminated(
+        take_until::<_, _, OracleError<'_>>(" count it as a card named "),
+        tag(" count it as a card named "),
+    )
+    .parse(rest)
+    .ok()?;
+    // Both names should match (the card counts as the spell that references it).
+    // Validate they're the same name (case-insensitive).
+    if !spell_name.eq_ignore_ascii_case(alias_name) {
+        return None;
+    }
+    // Title-case the name for storage (first letter of each word capitalized).
+    let name = spell_name
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(
+        StaticDefinition::new(StaticMode::CountsAsNamed { name })
+            .active_zones(vec![Zone::Graveyard])
+            .description(text.to_string()),
+    )
+}
