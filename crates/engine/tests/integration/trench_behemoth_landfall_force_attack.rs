@@ -284,10 +284,7 @@ fn trench_behemoth_e2e_landfall_forces_attack_then_expires() {
     // ── Step 2: Resolve the trigger (target P1's creature) ─────────────
     // Drive through OrderTriggers → TriggerTargetSelection → stack resolution.
     for _ in 0..100 {
-        if matches!(
-            runner.state().waiting_for,
-            WaitingFor::OrderTriggers { .. }
-        ) {
+        if matches!(runner.state().waiting_for, WaitingFor::OrderTriggers { .. }) {
             drain_order_triggers_with_identity(runner.state_mut());
             continue;
         }
