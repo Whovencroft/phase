@@ -239,3 +239,107 @@ fn trench_behemoth_runtime_not_pruned_during_wrong_players_combat() {
         "target creature must no longer be forced after P1's combat ends"
     );
 }
+
+// ─── End-to-end pipeline test ───────────────────────────────────────────────
+
+/// End-to-end: parse → resolve → prune pipeline.
+///
+/// Drives the full landfall trigger through the real engine pipeline:
+/// 1. Trench Behemoth on the battlefield under P0, a creature under P1.
+/// 2. P0 plays a land → landfall trigger fires → targets P1's creature.
+/// 3. Advance to P1's combat → the creature is forced to attack.
+/// 4. Advance past P1's combat → the requirement expires.
+///
+/// This collapses both the "parse → resolve installs transient effect" arrow
+/// and the "phase advance → pruner fires" arrow into one test.
+#[test]
+fn trench_behemoth_e2e_landfall_forces_attack_then_expires() {
+    use engine::game::triggers::drain_order_triggers_with_identity;
+    use engine::types::actions::GameAction;
+    use engine::types::game_state::WaitingFor;
+
+    let mut scenario = GameScenario::new();
+    scenario.at_phase(Phase::PreCombatMain);
+
+    // P0 controls Trench Behemoth with the landfall trigger.
+    let _behemoth = scenario
+        .add_creature_from_oracle(P0, "Trench Behemoth", 7, 7, TRENCH_BEHEMOTH_TRIGGER)
+        .id();
+    // P1 controls the creature that will be forced to attack.
+    let target = scenario.add_creature(P1, "Runeclaw Bear", 2, 2).id();
+    // A Forest in P0's hand for the landfall trigger.
+    let forest_id = scenario.add_land_to_hand(P0, "Forest").id();
+
+    let mut runner = scenario.build();
+
+    // ── Step 1: Play the land to fire the landfall trigger ──────────────
+    let card_id = runner.state().objects[&forest_id].card_id;
+    runner
+        .act(GameAction::PlayLand {
+            object_id: forest_id,
+            card_id,
+        })
+        .expect("P0 should be able to play a Forest from hand");
+
+    // ── Step 2: Resolve the trigger (target P1's creature) ─────────────
+    // Drive through OrderTriggers → TriggerTargetSelection → stack resolution.
+    for _ in 0..100 {
+        if matches!(
+            runner.state().waiting_for,
+            WaitingFor::OrderTriggers { .. }
+        ) {
+            drain_order_triggers_with_identity(runner.state_mut());
+            continue;
+        }
+        match &runner.state().waiting_for {
+            WaitingFor::Priority { .. } if runner.state().stack.is_empty() => break,
+            WaitingFor::TriggerTargetSelection { .. } => {
+                // The only legal target is P1's creature ("target creature an
+                // opponent controls").
+                runner
+                    .choose_first_legal_target()
+                    .expect("should select P1's creature as the target");
+            }
+            _ => {
+                if runner.act(GameAction::PassPriority).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Sanity: the trigger resolved and installed a transient effect.
+    assert!(
+        !runner.state().transient_continuous_effects.is_empty(),
+        "resolving the landfall trigger must install a transient MustAttack effect"
+    );
+
+    // ── Step 3: Advance to P1's combat; assert forced attack ───────────
+    // Simulate the start of P1's turn.
+    {
+        let state = runner.state_mut();
+        state.active_player = P1;
+        state.priority_player = P1;
+        state.phase = Phase::PreCombatMain;
+        state.waiting_for = WaitingFor::Priority { player: P1 };
+    }
+
+    runner.advance_to_combat();
+
+    // CR 508.1d: the target creature must be forced to attack.
+    assert!(
+        must_attack(&mut runner, target),
+        "P1's creature must be forced to attack during P1's combat \
+         (parse → resolve → MustAttack pipeline)"
+    );
+
+    // ── Step 4: Advance past combat; assert requirement expired ────────
+    runner.advance_to_phase(Phase::PostCombatMain);
+
+    // CR 511.3: the pruner fires at EndCombat, removing the effect.
+    assert!(
+        !must_attack(&mut runner, target),
+        "P1's creature must no longer be forced to attack after P1's combat ends \
+         (phase advance → pruner pipeline)"
+    );
+}
