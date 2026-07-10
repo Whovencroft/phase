@@ -1871,9 +1871,10 @@ pub enum StaticMode {
         counter_type: super::counter::CounterType,
         count: u32,
     },
-    /// CR 201.5: Odyssey Burst-cycle graveyard name-aliasing. While this card
-    /// is in a graveyard, effects that count "cards named X" treat it as having
-    /// the given name.
+    /// Odyssey Burst-cycle graveyard name-aliasing (no general CR governs this
+    /// templating; name-matching semantics per CR 201.2a). While this card is in
+    /// a graveyard, effects that count "cards named X" treat it as having the
+    /// given name.
     CountsAsNamed {
         name: String,
     },
@@ -2351,8 +2352,8 @@ impl Hash for StaticMode {
             // CR 614.1c: data-carrying (CounterType + count); consumed by direct
             // match in change_zone.rs, never used as a HashMap key.
             | StaticMode::EntersWithAdditionalCounters { .. }
-            // CR 201.5: data-carrying (name alias); consumed by direct match
-            // in filter.rs, never used as a HashMap key.
+            // Odyssey Burst-cycle (CR 201.2a): data-carrying (name alias);
+            // consumed by direct match in filter.rs, never used as a HashMap key.
             | StaticMode::CountsAsNamed { .. }
             // CR 116.2 + CR 118.7a: data-carrying (SpecialAction is not Hash);
             // consumed by direct match in the special-action cost-reduction
@@ -2888,7 +2889,7 @@ impl fmt::Display for StaticMode {
             StaticMode::LinkedCollectionCounterPlayPermission => {
                 write!(f, "LinkedCollectionCounterPlayPermission")
             }
-            // CR 201.5: Odyssey Burst-cycle graveyard name alias.
+            // Odyssey Burst-cycle graveyard name alias (CR 201.2a).
             StaticMode::CountsAsNamed { ref name } => {
                 write!(f, "CountsAsNamed({name})")
             }
@@ -3403,7 +3404,7 @@ impl FromStr for StaticMode {
                     .strip_prefix("CountsAsNamed(")
                     .and_then(|s| s.strip_suffix(')'))
                 {
-                    // CR 201.5: Odyssey Burst-cycle graveyard name alias.
+                    // Odyssey Burst-cycle graveyard name alias (CR 201.2a).
                     return Ok(StaticMode::CountsAsNamed {
                         name: inner.to_string(),
                     });

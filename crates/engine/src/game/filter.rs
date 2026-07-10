@@ -3644,8 +3644,13 @@ fn matches_filter_prop(
         // CR 113.1 + CR 113.3: "no abilities" means no keyword abilities and
         // no activated, triggered, replacement, or static abilities.
         FilterProp::HasNoAbilities => object_has_no_abilities(obj),
-        // CR 201.2: Name matching is exact (case-insensitive comparison).
-        // CR 201.5: Also check CountsAsNamed statics (Odyssey Burst cycle).
+        // CR 201.2a: Name matching is exact (case-insensitive comparison).
+        // Also check CountsAsNamed statics (Odyssey Burst cycle).
+        // NOTE: The alias applies to ANY FilterProp::Named check, not only effects
+        // from spells named X. This is safe for the entire Burst cycle because each
+        // Burst spell is the only effect referencing its own name — but if a future
+        // non-self-referential "counts as named" card appears, this may need a
+        // source-filter check.
         FilterProp::Named { name } => {
             obj.name.eq_ignore_ascii_case(name)
                 || obj.static_definitions.iter_all().any(|sd| {

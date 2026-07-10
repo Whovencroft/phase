@@ -8,7 +8,8 @@
 //!   "Target creature gets +X/+X until end of turn, where X is 3 plus the
 //!   number of cards named Muscle Burst in all graveyards."
 //!
-//! CR 201.5 (name aliasing): While in a graveyard, Diligent Farmhand is counted
+//! No general CR governs this Odyssey-specific templating; name-matching
+//! semantics per CR 201.2a. While in a graveyard, Diligent Farmhand is counted
 //! by any effect that counts "cards named Muscle Burst" in graveyards.
 //!
 //! This test verifies that the CountsAsNamed static (active only in graveyard)
@@ -17,10 +18,11 @@
 use engine::game::scenario::{GameScenario, P0};
 use engine::types::phase::Phase;
 
-/// Diligent Farmhand — only the second ability line matters for this test.
+/// Diligent Farmhand — uses "this card" (the production pipeline form; `"this card"`
+/// is in `SELF_REF_PARSE_ONLY_PHRASES` and is NOT normalized to `~`).
 const FARMHAND_ORACLE: &str = "{1}{G}, Sacrifice ~: Search your library for a basic \
 land card, put that card onto the battlefield tapped, then shuffle.\n\
-If ~ is in a graveyard, effects from spells named Muscle Burst count it as a card named Muscle Burst.";
+If this card is in a graveyard, effects from spells named Muscle Burst count it as a card named Muscle Burst.";
 
 /// Muscle Burst — verbatim Oracle text.
 const MUSCLE_BURST_ORACLE: &str = "Target creature gets +X/+X until end of turn, \
@@ -37,7 +39,7 @@ fn muscle_burst_counts_diligent_farmhands_in_graveyard() {
     scenario.at_phase(Phase::PreCombatMain);
 
     // Two Diligent Farmhands in the graveyard — their CountsAsNamed static is
-    // active only in graveyard (CR 201.5).
+    // active only in graveyard (CR 201.2a name-matching semantics).
     scenario
         .add_creature_to_graveyard(P0, "Diligent Farmhand", 1, 1)
         .from_oracle_text(FARMHAND_ORACLE);
