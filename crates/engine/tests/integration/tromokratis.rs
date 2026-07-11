@@ -31,10 +31,6 @@ const TROMOKRATIS_BLOCK_ORACLE: &str =
 /// Oracle text for Tromokratis's hexproof ability (line 1).
 const TROMOKRATIS_HEXPROOF_ORACLE: &str = "~ has hexproof unless it's attacking or blocking.";
 
-/// Full oracle text combining both abilities.
-const TROMOKRATIS_FULL_ORACLE: &str =
-    "Tromokratis has hexproof unless it's attacking or blocking.\n\
-     Tromokratis can't be blocked unless all creatures defending player controls block it.";
 
 fn create_creature(
     state: &mut GameState,
