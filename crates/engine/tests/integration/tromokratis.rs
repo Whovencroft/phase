@@ -9,7 +9,7 @@
 //! to confirm the restriction is enforced at the declare-blockers step.
 
 use engine::game::combat::{validate_blockers, AttackerInfo, CombatState};
-use engine::game::scenario::{GameRunner, GameScenario, P0, P1};
+use engine::game::scenario::{GameScenario, P0, P1};
 use engine::game::zones::create_object;
 use engine::types::ability::StaticDefinition;
 use engine::types::actions::GameAction;
@@ -17,7 +17,6 @@ use engine::types::card_type::CoreType;
 use engine::types::format::FormatConfig;
 use engine::types::game_state::{GameState, WaitingFor};
 use engine::types::identifiers::{CardId, ObjectId};
-use engine::types::keywords::Keyword;
 use engine::types::phase::Phase;
 use engine::types::player::PlayerId;
 use engine::types::statics::StaticMode;
@@ -273,7 +272,7 @@ fn e2e_hexproof_unless_attacking() {
     // layer evaluation.
     let has_hexproof_static = obj
         .static_definitions
-        .iter()
+        .iter_unchecked()
         .any(|sd| sd.mode == StaticMode::Continuous && sd.condition.is_some());
     assert!(
         has_hexproof_static,
