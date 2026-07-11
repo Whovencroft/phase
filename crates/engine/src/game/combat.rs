@@ -1578,9 +1578,12 @@ pub fn validate_blockers_for_player(
     // Unblocked (zero blockers) is always legal — the restriction only fires when
     // at least one creature is declared as a blocker.
     for (attacker_id, blockers) in &blockers_per_attacker {
-        let has_unless_all =
-            block_restriction_statics_against(state, *attacker_id, &block_restriction)
-                .any(|(def, _src_id)| def.mode == StaticMode::CantBeBlockedUnlessAllBlock);
+        let has_unless_all = block_restriction_statics_against_from_precomputed(
+            state,
+            *attacker_id,
+            &block_restriction,
+        )
+        .any(|(def, _src_id)| def.mode == StaticMode::CantBeBlockedUnlessAllBlock);
         if !has_unless_all {
             continue;
         }
