@@ -1577,6 +1577,11 @@ pub fn validate_blockers_for_player(
     // controls that could legally block it must also be assigned as a blocker.
     // Unblocked (zero blockers) is always legal — the restriction only fires when
     // at least one creature is declared as a blocker.
+    //
+    // NOTE: In shared-team-turn games (CR 802), `player` is the one declaring
+    // blockers and may be a teammate rather than the attacked player. We look up
+    // `defending_player` from `AttackerInfo` to correctly scope the "all creatures"
+    // requirement to the player being attacked.
     for (attacker_id, blockers) in &blockers_per_attacker {
         let has_unless_all = block_restriction_statics_against_from_precomputed(
             state,
@@ -1587,6 +1592,19 @@ pub fn validate_blockers_for_player(
         if !has_unless_all {
             continue;
         }
+        // Determine the defending player from combat state (falls back to `player`
+        // when combat state is unavailable, e.g. in unit tests).
+        let defending = state
+            .combat
+            .as_ref()
+            .and_then(|combat| {
+                combat
+                    .attackers
+                    .iter()
+                    .find(|a| a.object_id == *attacker_id)
+                    .map(|a| a.defending_player)
+            })
+            .unwrap_or(player);
         // At least one blocker is assigned — verify every able creature also blocks.
         for &obj_id in &state.battlefield {
             // Skip creatures already assigned to this attacker.
@@ -1596,7 +1614,7 @@ pub fn validate_blockers_for_player(
             let Some(obj) = state.objects.get(&obj_id) else {
                 continue;
             };
-            if obj.controller != player
+            if obj.controller != defending
                 || !obj.card_types.core_types.contains(&CoreType::Creature)
                 || obj.tapped
             {
