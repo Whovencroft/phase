@@ -1,0 +1,237 @@
+{
+  "modal": {
+    "title": "Ustawienia",
+    "subtitle": "Dostosuj rozgrywkę, grafikę, dźwięk i domyślne ustawienia trybu wieloosobowego."
+  },
+  "tabs": {
+    "gameplay": "Rozgrywka",
+    "visual": "Grafika",
+    "combat": "Tempo",
+    "audio": "Dźwięk",
+    "multiplayer": "Tryb wieloosobowy",
+    "data": "Dane"
+  },
+  "gameplay": {
+    "collapseLands": "Zwiń Lands",
+    "collapseSupport": "Zwiń Support",
+    "collapseZoneOptions": {
+      "auto": "Auto",
+      "on": "Zawsze wł.",
+      "off": "Zawsze wył."
+    },
+    "title": "Rozgrywka",
+    "language": "Język",
+    "cardSize": "Rozmiar kart",
+    "logDefault": "Domyślny dziennik",
+    "spellPayment": "Płatność za czary",
+    "manualManaPayment": "Ręczna płatność many za czary",
+    "boardBackground": "Tło pola bitwy",
+    "boardBackgroundGroups": {
+      "automatic": "Automatyczne",
+      "battlefields": "Pola bitwy",
+      "plain": "Jednolite",
+      "custom": "Niestandardowe",
+      "off": "Wyłączone"
+    },
+    "boardBackgroundOptions": {
+      "autoMatchDeck": "Auto (dopasuj do talii)",
+      "random": "Losowe",
+      "customUrl": "Niestandardowy URL",
+      "none": "Brak"
+    },
+    "commandZoneOptions": {
+      "compact": "Kompaktowy",
+      "inline": "Wbudowany",
+      "auto": "Auto"
+    },
+    "cardSizeOptions": {
+      "small": "Małe",
+      "medium": "Średnie",
+      "large": "Duże"
+    },
+    "logDefaultOptions": {
+      "open": "Otwarty",
+      "closed": "Zamknięty"
+    }
+  },
+  "visual": {
+    "title": "Grafika",
+    "vfxQuality": "Jakość efektów wizualnych",
+    "keywordStrip": "Pasek słów kluczowych",
+    "showKeywords": "Pokaż słowa kluczowe na kartach na polu bitwy",
+    "opponentHoverPreview": "Podgląd po najechaniu na przeciwnika",
+    "showOpponentBoard": "Pokaż pole bitwy przeciwnika po najechaniu na HUD",
+    "multiplayerBoardLayout": "Układ planszy wieloosobowej",
+    "multiplayerBoardLayoutOptions": {
+      "focused": "Skupiony przeciwnik",
+      "split": "Podzielony stół"
+    },
+    "cardPreviewDelay": "Opóźnienie podglądu",
+    "cardPreviewDelayInstant": "Natychmiast",
+    "cardPreviewDelayValue": "{{ms}} ms",
+    "cardPreviewDelayHint": "Odczekaj tyle czasu po najechaniu na kartę, zanim pojawi się podgląd.",
+    "cardPreview": "Podgląd karty po najechaniu",
+    "cardPreviewOptions": {
+      "follow": "Podążaj za kursorem",
+      "side": "Zadokuj z boku",
+      "shift": "Przytrzymaj Shift"
+    },
+    "cardPreviewHint": {
+      "follow": "Powiększony podgląd podąża za kursorem, gdy najeżdżasz na kartę.",
+      "side": "Podgląd dokuje się przy krawędzi ekranu, więc nigdy nie zasłania pola bitwy.",
+      "shift": "Podgląd pojawia się tylko wtedy, gdy przytrzymasz klawisz Shift, tak jak w Tabletop Simulator."
+    },
+    "cardArtPreferences": "Preferencje grafiki kart",
+    "clearArtOverrides_one": "Wyczyść wszystkie nadpisania grafiki ({{count}})",
+    "clearArtOverrides_other": "Wyczyść wszystkie nadpisania grafiki ({{count}})",
+    "clearArtOverridesConfirm_one": "Wyczyścić {{count}} nadpisanie grafiki?",
+    "clearArtOverridesConfirm_other": "Wyczyścić wszystkie nadpisania grafiki ({{count}})?",
+    "clearArtOverridesAction": "Wyczyść",
+    "vfxQualityOptions": {
+      "full": "Pełna",
+      "reduced": "Zredukowana",
+      "minimal": "Minimalna"
+    }
+  },
+  "flexLayout": {
+    "title": "Elastyczny układ",
+    "description": "Przeciągaj panele i HUD w dowolne miejsce i zmieniaj rozmiar stref planszy.",
+    "edit": "Dostosuj układ…",
+    "done": "Gotowe",
+    "reset": "Zresetuj układ",
+    "preset": "Ustawienie",
+    "hint": "Przeciągnij panel, aby go przesunąć. Przeciągnij świecące paski, aby zmienić rozmiar stref.",
+    "align": {
+      "left": "Wyrównaj do lewej",
+      "center": "Wyśrodkuj",
+      "right": "Wyrównaj do prawej"
+    },
+    "presets": {
+      "default": { "label": "Układ 1", "description": "Standardowy, zrównoważony układ." },
+      "layout2": { "label": "Układ 2", "description": "Większe pole bitwy ze schowanymi rękami." },
+      "layout3": { "label": "Układ 3", "description": "Wyższa dolna część." }
+    },
+    "zones": {
+      "playerHud": "Twój HUD",
+      "opponentHud": "HUD przeciwnika",
+      "stackPanel": "Stos",
+      "logPanel": "Dziennik",
+      "actionRail": "Akcje",
+      "playerPiles": "Twoje strefy",
+      "opponentPiles": "Strefy przeciwnika"
+    }
+  },
+  "audio": {
+    "title": "Dźwięk",
+    "muteAll": "Wycisz wszystko",
+    "muteAllAudio": "Wycisz cały dźwięk",
+    "globalVolume": "Głośność ogólna",
+    "sfxVolume": "Głośność efektów",
+    "musicVolume": "Głośność muzyki"
+  },
+  "audioTheme": {
+    "title": "Motyw dźwiękowy",
+    "theme": "Motyw",
+    "importTheme": "Importuj motyw",
+    "loading": "Ładowanie...",
+    "import": "Importuj",
+    "importFailed": "Nie udało się zaimportować motywu",
+    "customThemes": "Niestandardowe motywy",
+    "remove": "Usuń"
+  },
+  "multiplayer": {
+    "title": "Tryb wieloosobowy",
+    "displayName": "Nazwa wyświetlana",
+    "displayNamePlaceholder": "Wprowadź swoją nazwę",
+    "serverSelectionNote": "Wybór serwera został przeniesiony do poczekalni — otwórz Tryb wieloosobowy i użyj plakietki serwera (lub „Wybierz serwer” w trybie P2P), aby zmieniać regiony, skonfigurować własną instancję lub przetestować połączenie."
+  },
+  "sync": {
+    "title": "Synchronizacja w chmurze",
+    "description": "Zaloguj się, aby synchronizować talie, preferencje i subskrypcje kanałów między urządzeniami. Twoje dane znajdują się na Twoim koncie i są aktualizowane automatycznie przy każdej zmianie.",
+    "signInWith": "Zaloguj się przez {{provider}}",
+    "signOut": "Wyloguj się",
+    "signedInAs": "Zalogowano jako {{name}}",
+    "syncNow": "Synchronizuj teraz",
+    "statusSyncing": "Synchronizowanie…",
+    "statusError": "Synchronizacja nie powiodła się",
+    "lastSynced": "Ostatnia synchronizacja: {{time}}",
+    "never": "nigdy",
+    "conflictTitle": "Obie kopie mają zmiany",
+    "conflictBody": "To urządzenie i Twoje konto w chmurze zawierają dane, a nie możemy ustalić, która kopia jest aktualna. Wybierz, którą zachować — druga zostanie zastąpiona.",
+    "keepCloud": "Użyj chmury",
+    "keepLocal": "Zachowaj to urządzenie",
+    "savesNote": "Zapisy gier i pamięć podręczna pozostają na tym urządzeniu.",
+    "diffDecks": "Talie: {{added}} dodanych, {{modified}} zmienionych, {{removed}} usuniętych",
+    "diffPrefs": "Preferencje są różne",
+    "diffFeeds": "Subskrypcje kanałów są różne",
+    "diffOther": "Inne ustawienia są różne",
+    "providerDiscord": "Discord",
+    "providerGoogle": "Google"
+  },
+  "data": {
+    "title": "Kopia zapasowa i przywracanie",
+    "description": "Eksport pakuje twoje preferencje, zaimportowane talie i subskrypcje kanałów do jednego pliku JSON. Import przywraca je na innym komputerze. Pamięci podręczne IndexedDB (pamięć kanałów, pamięć dźwięku, zapisane gry) nie są dołączane — odbudowują się automatycznie.",
+    "exportBackup": "Eksportuj kopię zapasową…",
+    "importBackup": "Importuj kopię zapasową…",
+    "importModeTitle": "Importuj kopię zapasową",
+    "importModeMessage": "Zastąp wszystko kopią zapasową (destrukcyjnie) lub scal — zachowaj istniejące talie i dodaj nowe z kopii.",
+    "importOverwrite": "Zastąp wszystko",
+    "importMerge": "Scal",
+    "importConfirm": "Nadpisać istniejące preferencje i talie?\n\nOK: zastąp wszystko kopią zapasową (destrukcyjne).\nAnuluj: scal — zachowaj istniejące talie, dodaj nowe z kopii zapasowej.",
+    "backupDownloaded": "Kopia zapasowa pobrana.",
+    "imported_one": "Zaimportowano {{count}} talię.",
+    "imported_other": "Zaimportowano {{count}} talii.",
+    "importedWithPreferences_one": "Zaimportowano {{count}} talię i preferencje.",
+    "importedWithPreferences_other": "Zaimportowano {{count}} talii i preferencje.",
+    "skippedMalformed_one": "Pominięto {{count}} nieprawidłowy wpis.",
+    "skippedMalformed_other": "Pominięto {{count}} nieprawidłowych wpisów.",
+    "telemetry": "Wysyłaj anonimowe raporty o awariach i użyciu",
+    "telemetryDescription": "Pomaga naprawiać awarie i ustalać priorytety obsługi kart. Bez konta, bez danych osobowych — tylko liczniki błędów i podsumowań gier."
+  },
+  "resetAll": {
+    "confirm": "Zresetować wszystkie preferencje do wartości domyślnych? Spowoduje to wyczyszczenie każdego ustawienia w tym oknie.",
+    "button": "Zresetuj wszystkie preferencje",
+    "confirmAction": "Zresetuj"
+  },
+  "pacing": {
+    "title": "Tempo",
+    "resetSection": "Zresetuj sekcję",
+    "animationSpeed": "Szybkość animacji",
+    "animationSpeedDescription": "Główna szybkość — wyższa jest szybsza. Skrajnie w prawo całkowicie pomija animacje.",
+    "hint": "Suwaki poszczególnych kategorii mnożą się na podstawie Szybkości animacji. Kliknij dwukrotnie dowolny suwak — lub dotknij <glyph>↺</glyph> obok niego — aby zresetować.",
+    "instant": "Natychmiast",
+    "slowest": "Najwolniej",
+    "resetSliderLabel": "Zresetuj {{label}} do wartości domyślnej",
+    "atDefault": "Wartość domyślna",
+    "resetToDefault": "Zresetuj do wartości domyślnej",
+    "labels": {
+      "effects": "Tempo efektów",
+      "combat": "Tempo walki",
+      "banners": "Tempo banerów"
+    },
+    "descriptions": {
+      "effects": "Rzucanie czarów, zmiany stref, śmierci, zmiany życia, znaczniki, obracanie/odwracanie.",
+      "combat": "Czas obrażeń bojowych — jak długo blokujący i atakujący pozostają, zanim obrażenia zostaną rozpatrzone.",
+      "banners": "Wyświetlanie banera na początku tury."
+    }
+  },
+  "artChain": {
+    "emptyState": "Używanie domyślnej grafiki Scryfall. Dodaj reguły poniżej, aby dostosować.",
+    "moveUp": "Przesuń w górę",
+    "moveDown": "Przesuń w dół",
+    "remove": "Usuń",
+    "unreachable": "Reguły poniżej „{{rule}}” są nieosiągalne — zawsze pasuje.",
+    "addRule": "Dodaj regułę",
+    "setInputPlaceholder": "Kod lub nazwa zestawu…",
+    "addSet": "Dodaj zestaw",
+    "rulesPriorityNote": "Reguły są sprawdzane od góry do dołu. Wygrywa pierwsze dopasowanie. „Wydanie źródłowe” używa zestawu z paczki draftowej lub importu talii, gdy jest dostępny. Nadpisania dla poszczególnych kart (prawy przycisk myszy w kreatorze talii) zawsze mają priorytet.",
+    "setEntry": "Zestaw: {{name}} ({{code}})",
+    "rules": {
+      "sourcePrinting": "Wydanie źródłowe",
+      "newest": "Najnowsze wydanie",
+      "oldest": "Najstarsze wydanie",
+      "preferBorderless": "Preferuj bez ramki",
+      "preferExtended": "Preferuj grafikę rozszerzoną"
+    }
+  }
+}

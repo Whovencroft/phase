@@ -1,0 +1,25 @@
+[alias]
+release-local = "release --workspace --execute --no-confirm --no-publish --no-push"
+wasm = "build --package engine-wasm --target wasm32-unknown-unknown --profile wasm-dev"
+wasm-release = "build --package engine-wasm --target wasm32-unknown-unknown --release"
+test-all = "nextest run --workspace --features engine/proptest"
+clippy-strict = "clippy --all-targets -- -D warnings"
+export-cards = "run --profile tool --bin card-data-export --"
+export-json = "run --profile tool --bin json-export --"
+migrate-abilities = "run --profile tool --bin migrate-abilities --"
+serve = "run --release --bin phase-server"
+coverage = "run --profile tool --bin coverage-report -- data/"
+parser-gaps = "run --profile tool --bin parser-gap-analyzer -- data/"
+rules-audit = "run --profile tool --bin rules-audit --features audit --"
+semantic-audit = "run --profile tool --features cli --bin oracle-gen -- semantic-audit"
+combo-verify = "run --profile tool --features combo-verify --bin combo-verify -- data/"
+scrape-feeds = "run --release -p feed-scraper --"
+tune-ai = "run --release --features tune --bin ai-tune --"
+ai-gate = "run --bin ai-gate --"
+ai-perf-gate = "run --bin ai-perf-gate --"
+engine-inventory = "run --quiet -p engine-inventory-gen"
+
+[env]
+# 16 MB stack for test threads — prevents stack overflow when Debug formatting
+# deeply nested recursive types (Effect ↔ AbilityDefinition mutual recursion).
+RUST_MIN_STACK = "16777216"

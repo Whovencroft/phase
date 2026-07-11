@@ -1,0 +1,36 @@
+---
+source: crates/engine/tests/integration/oracle_parser.rs
+expression: result
+---
+{
+  "abilities": [
+    {
+      "kind": "Activated",
+      "effect": {
+        "type": "Mana",
+        "produced": {
+          "type": "Fixed",
+          "colors": [
+            "Green"
+          ]
+        }
+      },
+      "cost": {
+        "type": "Tap"
+      },
+      "sub_ability": null,
+      "duration": null,
+      "description": "{T}: Add {G}.",
+      "target_prompt": null,
+      "condition": null,
+      "optional_targeting": false,
+      "optional": false,
+      "forward_result": false,
+      "is_mana_ability": true
+    }
+  ],
+  "triggers": [],
+  "statics": [],
+  "replacements": [],
+  "extractedKeywords": []
+}

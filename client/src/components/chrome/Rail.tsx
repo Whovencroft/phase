@@ -1,0 +1,109 @@
+import { useTranslation } from "react-i18next";
+import { Link, useLocation, useNavigate } from "react-router";
+
+import { BuildBadge } from "./BuildBadge";
+import { activeNavKey, NAV_ITEMS } from "./navItems";
+import { SparkleIcon } from "./SparkleIcon";
+
+/**
+ * Desktop navigation rail (≥820px). Logo → the five primary destinations, and a
+ * footer with Settings and the build/version chip. Social badges live in the
+ * shell's top-left SocialBar (not the rail). Hidden below 820px, where TabBar +
+ * SocialBar take over.
+ */
+interface RailProps {
+  onSettings: () => void;
+  onWhatsNew: () => void;
+  /** When true, an unread dot rides the "What's New" button. */
+  hasUnread: boolean;
+}
+
+export function Rail({ onSettings, onWhatsNew, hasUnread }: RailProps) {
+  const { t } = useTranslation("menu");
+  const navigate = useNavigate();
+  const active = activeNavKey(useLocation().pathname);
+
+  return (
+    <nav
+      // Structural left column (≥820px): a sticky, full-viewport-height cell that
+      // pins as the document scrolls and scrolls INTERNALLY when its own content
+      // exceeds the viewport (e.g. landscape phones ~390px tall). At short heights
+      // it also compacts (icon-only, tighter spacing) so scrolling is rarely
+      // needed; `overflow-y-auto` is the safety net for the very shortest devices.
+      className="sticky top-0 z-30 hidden h-[100dvh] w-[92px] shrink-0 self-start flex-col items-center gap-2 overflow-y-auto border-r border-hairline-strong bg-[rgba(6,10,22,0.94)] px-2 py-[18px] min-[820px]:flex [@media(max-height:540px)]:gap-1 [@media(max-height:540px)]:py-2"
+      aria-label={t("nav.label")}
+    >
+      <button
+        onClick={() => navigate("/")}
+        className="mb-2.5 cursor-pointer border-0 bg-transparent p-0 [@media(max-height:540px)]:mb-1"
+        aria-label={t("nav.home")}
+      >
+        <img
+          src="/logo_only.webp"
+          alt="phase.rs"
+          className="w-11 [@media(max-height:540px)]:w-8"
+        />
+      </button>
+
+      <div className="flex w-full flex-col gap-1">
+        {NAV_ITEMS.map(({ key, path, labelKey, Icon }) => {
+          const on = active === key;
+          return (
+            <Link
+              key={key}
+              to={path}
+              aria-current={on ? "page" : undefined}
+              className={`group relative flex flex-col items-center gap-1.5 rounded-[8px] border px-1 py-[11px] transition-colors duration-150 [@media(max-height:540px)]:gap-0.5 [@media(max-height:540px)]:py-1.5 ${
+                on
+                  ? "border-white/15 bg-slate-900 text-white"
+                  : "border-transparent text-fg-meta hover:border-white/10 hover:bg-slate-950 hover:text-slate-300"
+              }`}
+            >
+              <Icon
+                className={`h-7 w-7 transition-opacity duration-150 ${
+                  on
+                    ? "opacity-100"
+                    : "opacity-50 group-hover:opacity-100"
+                }`}
+              />
+              <span className="text-[10.5px] font-semibold tracking-[0.02em]">
+                {t(labelKey)}
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+
+      <div className="mt-auto flex w-full flex-col items-center gap-2 border-t border-hairline-strong pt-2.5 [@media(max-height:540px)]:gap-1 [@media(max-height:540px)]:pt-1.5">
+        <button
+          onClick={onWhatsNew}
+          className="relative flex w-full flex-col items-center gap-1 rounded-[8px] border border-transparent px-1 py-2 text-fg-meta transition-colors hover:border-white/10 hover:bg-slate-950 hover:text-slate-300 [@media(max-height:540px)]:py-1"
+        >
+          <span className="relative">
+            <SparkleIcon className="h-6 w-6 opacity-50" />
+            {hasUnread && (
+              <span className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full bg-amber-400 ring-2 ring-[rgba(6,10,22,0.9)]">
+                <span className="sr-only">{t("whatsNew.unread")}</span>
+              </span>
+            )}
+          </span>
+          <span className="text-[10.5px] font-semibold tracking-[0.02em]">{t("nav.whatsNew")}</span>
+        </button>
+
+        <button
+          onClick={onSettings}
+          className="flex w-full flex-col items-center gap-1 rounded-[8px] border border-transparent px-1 py-2 text-fg-meta transition-colors hover:border-white/10 hover:bg-slate-950 hover:text-slate-300 [@media(max-height:540px)]:py-1"
+        >
+          <img src="/icons/sections/settings.png" alt="" aria-hidden="true" draggable={false} className="h-6 w-6 opacity-50" />
+          <span className="text-[10.5px] font-semibold tracking-[0.02em]">{t("nav.settings")}</span>
+        </button>
+
+        {/* Version/update chip is non-essential during landscape play; hide it at
+            short heights to keep the rail fully visible without scrolling. */}
+        <div className="[@media(max-height:540px)]:hidden">
+          <BuildBadge compact />
+        </div>
+      </div>
+    </nav>
+  );
+}

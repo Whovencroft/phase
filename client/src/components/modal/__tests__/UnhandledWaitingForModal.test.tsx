@@ -1,0 +1,86 @@
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { GameState, WaitingFor } from "../../../adapter/types.ts";
+import { UnhandledWaitingForModal } from "../UnhandledWaitingForModal.tsx";
+import { useGameStore } from "../../../stores/gameStore.ts";
+import { useMultiplayerStore } from "../../../stores/multiplayerStore.ts";
+import { buildGameState } from "../../../test/factories/gameStateFactory.ts";
+
+function makeState(waitingFor: WaitingFor): GameState {
+  return buildGameState({
+    waiting_for: waitingFor,
+    next_object_id: 100,
+    next_timestamp: 2,
+    turn_decision_controller: 0,
+  });
+}
+
+describe("UnhandledWaitingForModal (issue #311 safety net)", () => {
+  beforeEach(() => {
+    useMultiplayerStore.setState({ activePlayerId: 0 });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders nothing when waitingFor type is handled (e.g. Priority)", () => {
+    const state = makeState({ type: "Priority", data: { player: 0 } });
+    useGameStore.setState({ gameMode: "ai", gameState: state, waitingFor: state.waiting_for });
+    const onExit = vi.fn();
+    const { container } = render(
+      <UnhandledWaitingForModal onExit={onExit} exitLabel="Return to menu" />,
+    );
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("renders nothing when the local player is not the actor", () => {
+    // Opponent is acting — local player has nothing to do, no fallback needed.
+    const orphan = {
+      type: "OrphanEngineChoice",
+      data: { player: 1 },
+    } as unknown as WaitingFor;
+    const state = makeState(orphan);
+    useGameStore.setState({ gameMode: "ai", gameState: state, waitingFor: state.waiting_for });
+    const onExit = vi.fn();
+    const { container } = render(
+      <UnhandledWaitingForModal onExit={onExit} exitLabel="Return to menu" />,
+    );
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("surfaces fail-loud diagnostic when local player is the actor on an unhandled type", () => {
+    // Engine-only WaitingFor variant that the FE has no modal for.
+    const orphan = {
+      type: "OrphanEngineChoice",
+      data: { player: 0 },
+    } as unknown as WaitingFor;
+    const state = makeState(orphan);
+    useGameStore.setState({ gameMode: "ai", gameState: state, waitingFor: state.waiting_for });
+    const onExit = vi.fn();
+    render(
+      <UnhandledWaitingForModal onExit={onExit} exitLabel="Return to menu" />,
+    );
+    expect(screen.getByText("Action required, but UI is missing")).toBeInTheDocument();
+    // The missing type is named so the user can report it.
+    expect(screen.getByText("OrphanEngineChoice")).toBeInTheDocument();
+    // Exit button is present and labeled per caller.
+    expect(screen.getByRole("button", { name: "Return to menu" })).toBeInTheDocument();
+  });
+
+  it("invokes onExit when the exit button is clicked", () => {
+    const orphan = {
+      type: "OrphanEngineChoice",
+      data: { player: 0 },
+    } as unknown as WaitingFor;
+    const state = makeState(orphan);
+    useGameStore.setState({ gameMode: "online", gameState: state, waitingFor: state.waiting_for });
+    const onExit = vi.fn();
+    render(
+      <UnhandledWaitingForModal onExit={onExit} exitLabel="Concede game" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Concede game" }));
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+});

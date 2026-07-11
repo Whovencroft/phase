@@ -1,0 +1,361 @@
+#!/usr/bin/env bash
+# Diff-based gate: new parser code must not introduce string-matching dispatch
+# patterns. Forces nom combinators on first write per the CLAUDE.md mandate,
+# rather than leaving refactor-to-combinators for review.
+#
+# Existing non-combinator code in the parser is frozen in amber — this check
+# only flags *newly added* offending lines in the diff.
+#
+# Six forbidden pattern families:
+#   (A) String-method dispatch: .strip_prefix / .contains("...") / .split_once
+#       / .find("...") / .rfind("...") / .split("...") / .splitn / etc.
+#       Use nom combinators (tag, alt, take_until) instead.
+#   (B) Match-arm dispatch on string literals: `match expr { "foo" => ..., }`.
+#       Discriminant is parser text; arms are literals. Use alt((tag(...))).
+#   (C) Chained `if let Ok((rest, _)) = tag("…")(input)` blocks (≥2 in one
+#       file). Sequential tag tries should compose into a single alt(()).
+#   (D) Un-factored cross-product alt: a flat `alt` whose ≥4 `tag` arms share a
+#       long common prefix AND suffix (e.g. "in addition to {its,their,...} other
+#       [creature ]types"). Factor each varying axis into its own alt()/opt()
+#       inside a sequence; see PATTERNS.md section 8b. Multi-line structural
+#       check delegated to scripts/lib/detect-cross-product-alts.py.
+#   (E) Verbatim-sentence equality: `lower == "twenty-five plus chars..."`.
+#       Matching a whole Oracle sentence handles exactly one card — decompose
+#       into typed building blocks (grammar prefix/suffix combinators).
+#   (F) Hand-constructed `Effect::Unimplemented { .. }` literals. The single
+#       authority is `Effect::unimplemented(name, fragment)` — it documents
+#       the name-is-a-category-key contract the coverage report depends on.
+#       Match-arm destructuring (`Effect::Unimplemented { name, .. } =>`) is
+#       not flagged.
+#
+# Exempt: lines (or the line immediately above) with
+#     // allow-noncombinator: <reason>
+# Legitimate uses are rare (TextPair dual-string helpers, punctuation stripping
+# on already-tokenized input, dynamic-string prefixes with runtime tag bodies,
+# string assertions in tests).
+#
+# Usage:
+#   scripts/check-parser-combinators.sh [base-ref]
+#
+# Default base-ref is the merge-base with origin/main. In CI, pass the PR
+# target branch's SHA explicitly.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CROSS_PRODUCT_DETECTOR="$SCRIPT_DIR/lib/detect-cross-product-alts.py"
+
+BASE="${1:-$(git merge-base origin/main HEAD 2>/dev/null || echo HEAD~1)}"
+SCOPE='crates/engine/src/parser'
+
+# When invoked as a pre-commit hook (GIT_INDEX_FILE is set, or no explicit base
+# was provided and BASE == HEAD), only check staged changes to avoid flagging
+# another agent's unstaged work in the working tree.
+DIFF_MODE=""
+if [ -n "${GIT_INDEX_FILE:-}" ] || [ "$BASE" = "$(git rev-parse HEAD 2>/dev/null)" ]; then
+    DIFF_MODE="--cached"
+fi
+
+# (A) String-method dispatch. The "..." suffix on `.contains` / `.starts_with`
+# / `.ends_with` / `.find` / `.rfind` / `.split` / `.trim_*_matches` matches
+# only string-literal arguments — `.contains(&item)` (Vec/slice op),
+# `.trim_end_matches('.')` (char arg, structural cleanup), and the documented
+# `.find(' ')` word-boundary-scan idiom are legitimate. strip_prefix /
+# strip_suffix / split_once / rsplit_once / splitn almost always operate on
+# string literals; flag unconditionally.
+FORBIDDEN_METHODS='\.strip_prefix\(|\.strip_suffix\(|\.split_once\(|\.rsplit_once\(|\.splitn\(|\.contains\("|\.starts_with\("|\.ends_with\("|\.find\("|\.rfind\("|\.split\("|\.trim_end_matches\("|\.trim_start_matches\("'
+
+# (B) Match-arm string-literal pattern. Lines that look like `"literal" => ...`
+# at the start of an indented block. In Rust, string-literal patterns are
+# valid only when matching a `&str`, which in parser code means matching on
+# parser text — exactly the dispatch the mandate prohibits. Inline `#[cfg(test)]`
+# fixtures inside parser modules are within scope; if a test legitimately
+# match-maps strings (rare), use `// allow-noncombinator: test fixture`.
+FORBIDDEN_MATCH_ARM='^\+[[:space:]]*"[^"]+"[[:space:]]*=>'
+
+# (C) `if let Ok((…)) = tag("literal")(…)`. One use is fine (extracting a
+# single optional prefix). Two or more in one file is the chained anti-pattern
+# — should collapse into `alt((tag(...), tag(...)))`. Counted per file.
+IFLET_TAG_PATTERN='^\+[[:space:]]*if[[:space:]]+let[[:space:]]+Ok.*=[[:space:]]*tag(_no_case)?(::<[^>]*>)?\("[^"]+"\)'
+
+# (E) Verbatim-sentence equality. `expr == "long literal"` (or reversed) with a
+# 25+-char literal is a whole-Oracle-sentence match — the single most
+# prohibited pattern. Short literals (`== "x"` for a counter symbol, type word)
+# are legitimate leaf comparisons and stay unflagged.
+FORBIDDEN_VERBATIM_EQ='(==|!=)[[:space:]]*"[^"]{25,}"|"[^"]{25,}"[[:space:]]*(==|!=)'
+
+# (F) Hand-constructed Unimplemented literal. Construction is either a
+# single-line `Effect::Unimplemented { name: ...` (colon after `name`) or a
+# multi-line opener ending in `{`. Destructuring patterns (`{ name, .. } =>`,
+# `{ .. }`) match neither alternative.
+FORBIDDEN_UNIMPL_LITERAL='Effect::Unimplemented[[:space:]]*\{[[:space:]]*$|Effect::Unimplemented[[:space:]]*\{[[:space:]]*name:'
+
+FAIL=0
+report_methods=""
+report_match_arm=""
+report_iflet_tag=""
+report_crossprod=""
+report_verbatim_eq=""
+report_unimpl=""
+
+# Filter a per-file candidate list against the allow-noncombinator escape
+# hatch. Reads candidate lines (each prefixed by '+') on stdin, prints the
+# unfiltered text to stdout. Args: $1 = file path.
+filter_allow_noncombinator() {
+    local file="$1"
+    local candidates="$2"
+    local added=""
+    while IFS= read -r diff_line; do
+        [ -z "$diff_line" ] && continue
+        local text="${diff_line#*+}"
+        local ln
+        ln=$(grep -nFx "$text" "$file" 2>/dev/null | head -1 | cut -d: -f1)
+        if [ -n "$ln" ] && [ "$ln" -gt 1 ]; then
+            local prev
+            prev=$(sed -n "$((ln-1))p" "$file")
+            if echo "$prev" | grep -q 'allow-noncombinator'; then
+                continue
+            fi
+        fi
+        # Same-line annotation also exempts.
+        if echo "$text" | grep -q 'allow-noncombinator'; then
+            continue
+        fi
+        added="${added}${text}
+"
+    done <<< "$candidates"
+    printf '%s' "${added%$'\n'}"
+}
+
+# Outlined test files (`mod tests;` / `#[path] mod ..._tests;` siblings) are
+# #[cfg(test)]-gated by their module declaration and contain only test fixtures
+# and assertions (e.g. `assert!(s.contains("..."))`) — never production parser
+# dispatch, which would be dead code under cfg(test). They lose the inline
+# `#[cfg(test)]` marker a line-based scan keys on, so exclude them by name; their
+# parent module file is still fully scanned, including any inline test fixtures.
+files=$(git diff $DIFF_MODE --name-only "$BASE" -- "$SCOPE" \
+    ':(exclude)**/*.md' \
+    ':(exclude)**/tests.rs' \
+    ':(exclude)**/*_tests.rs' 2>/dev/null || true)
+if [ -z "$files" ]; then
+    exit 0
+fi
+
+while IFS= read -r file; do
+    [ -f "$file" ] || continue
+
+    # Pull all added lines once (without line-number prefix) for reuse.
+    diff_added=$(git diff $DIFF_MODE --unified=0 "$BASE" -- "$file" | grep -E '^\+[^+]' || true)
+    if [ -z "$diff_added" ]; then
+        continue
+    fi
+
+    # (A) String-method dispatch.
+    methods_hits=$(echo "$diff_added" | grep -Ev 'allow-noncombinator' | grep -E "$FORBIDDEN_METHODS" || true)
+    methods_clean=$(filter_allow_noncombinator "$file" "$methods_hits")
+    if [ -n "$methods_clean" ]; then
+        report_methods="${report_methods}
+  ${file}:"
+        while IFS= read -r line; do
+            report_methods="${report_methods}
+    ${line}"
+        done <<< "$methods_clean"
+        FAIL=1
+    fi
+
+    # (B) Match-arm string-literal patterns.
+    match_arm_hits=$(echo "$diff_added" | grep -Ev 'allow-noncombinator' | grep -E "$FORBIDDEN_MATCH_ARM" || true)
+    match_arm_clean=$(filter_allow_noncombinator "$file" "$match_arm_hits")
+    if [ -n "$match_arm_clean" ]; then
+        report_match_arm="${report_match_arm}
+  ${file}:"
+        while IFS= read -r line; do
+            report_match_arm="${report_match_arm}
+    ${line}"
+        done <<< "$match_arm_clean"
+        FAIL=1
+    fi
+
+    # (C) Chained if-let-tag. Count occurrences in this file's added lines;
+    # 2+ is the anti-pattern. Single occurrences are fine (and common).
+    iflet_hits=$(echo "$diff_added" | grep -Ev 'allow-noncombinator' | grep -E "$IFLET_TAG_PATTERN" || true)
+    iflet_clean=$(filter_allow_noncombinator "$file" "$iflet_hits")
+    iflet_count=0
+    if [ -n "$iflet_clean" ]; then
+        iflet_count=$(printf '%s\n' "$iflet_clean" | grep -c '.' || true)
+    fi
+    if [ "$iflet_count" -ge 2 ]; then
+        report_iflet_tag="${report_iflet_tag}
+  ${file}: (${iflet_count} chained tag if-lets)"
+        while IFS= read -r line; do
+            report_iflet_tag="${report_iflet_tag}
+    ${line}"
+        done <<< "$iflet_clean"
+        FAIL=1
+    fi
+
+    # (E) Verbatim-sentence equality comparisons.
+    verbatim_hits=$(echo "$diff_added" | grep -Ev 'allow-noncombinator' | grep -E "$FORBIDDEN_VERBATIM_EQ" || true)
+    verbatim_clean=$(filter_allow_noncombinator "$file" "$verbatim_hits")
+    if [ -n "$verbatim_clean" ]; then
+        report_verbatim_eq="${report_verbatim_eq}
+  ${file}:"
+        while IFS= read -r line; do
+            report_verbatim_eq="${report_verbatim_eq}
+    ${line}"
+        done <<< "$verbatim_clean"
+        FAIL=1
+    fi
+
+    # (F) Hand-constructed Effect::Unimplemented literals.
+    unimpl_hits=$(echo "$diff_added" | grep -Ev 'allow-noncombinator' | grep -E "$FORBIDDEN_UNIMPL_LITERAL" || true)
+    unimpl_clean=$(filter_allow_noncombinator "$file" "$unimpl_hits")
+    if [ -n "$unimpl_clean" ]; then
+        report_unimpl="${report_unimpl}
+  ${file}:"
+        while IFS= read -r line; do
+            report_unimpl="${report_unimpl}
+    ${line}"
+        done <<< "$unimpl_clean"
+        FAIL=1
+    fi
+
+    # (D) Un-factored cross-product alt. Multi-line structural check: feed the
+    # unified=0 diff for this file to the Python detector, which maps added
+    # lines onto post-image `alt` blocks and flags those with >=4 tag arms
+    # sharing a long common prefix AND suffix. Skipped (not failed) if python3
+    # is unavailable, so the gate degrades gracefully outside CI.
+    if command -v python3 >/dev/null 2>&1 && [ -f "$CROSS_PRODUCT_DETECTOR" ]; then
+        crossprod_hits=$(git diff $DIFF_MODE --unified=0 "$BASE" -- "$file" \
+            | python3 "$CROSS_PRODUCT_DETECTOR" "$file" 2>/dev/null || true)
+        if [ -n "$crossprod_hits" ]; then
+            report_crossprod="${report_crossprod}
+${crossprod_hits}"
+            FAIL=1
+        fi
+    fi
+done <<< "$files"
+
+if [ "$FAIL" -eq 1 ]; then
+    cat >&2 <<EOF
+ERROR: New parser code violates the nom-combinator mandate.
+
+The parser mandate (CLAUDE.md) requires nom combinators for ALL parsing
+dispatch. Copy-paste-ready patterns for every common shape are in:
+
+    crates/engine/src/parser/oracle_nom/PATTERNS.md
+
+EOF
+
+    if [ -n "$report_methods" ]; then
+        cat >&2 <<EOF
+(A) String-method dispatch — use combinators instead:
+    .strip_prefix / .trim_start_matches  -> Pattern 1 (optional fixed prefix)
+    .strip_suffix / .trim_end_matches    -> Pattern 2 or 3 (suffix / trailing)
+    .contains / .starts_with / .ends_with -> Pattern 7 (integrate into parse)
+    .split_once / .rsplit_once / .splitn -> Pattern 6 (delimiter split)
+    .split("...")                        -> Pattern 6 (delimiter split)
+    .find("...") / .rfind("...")         -> Pattern 5 (word-boundary scan)
+
+Forbidden in added lines (diff vs ${BASE}):
+${report_methods}
+
+EOF
+    fi
+
+    if [ -n "$report_match_arm" ]; then
+        cat >&2 <<EOF
+(B) Match-arm dispatch on string literals — use alt((tag(...), tag(...))):
+    match subject_tp.lower.trim() {                ->  alt((
+        "creatures" => Some(TypedFilter::creature()),  tag("creatures").map(|_| TypedFilter::creature()),
+        "permanents" => Some(TypedFilter::permanent()),tag("permanents").map(|_| TypedFilter::permanent()),
+        ...                                             ...
+    }                                                 )).parse(input)
+
+Forbidden in added lines (diff vs ${BASE}):
+${report_match_arm}
+
+EOF
+    fi
+
+    if [ -n "$report_iflet_tag" ]; then
+        cat >&2 <<EOF
+(C) Chained if-let-tag blocks — collapse into a single alt(()):
+    if let Ok((rest, _)) = tag("foo")(input) { ... }   ->  alt((
+    if let Ok((rest, _)) = tag("bar")(input) { ... }       tag("foo"),
+                                                            tag("bar"),
+                                                          )).parse(input)?
+
+Two or more sequential tag tries in one file are the chained anti-pattern.
+A single if-let-tag for an optional prefix is fine.
+
+Forbidden in added files (diff vs ${BASE}):
+${report_iflet_tag}
+
+EOF
+    fi
+
+    if [ -n "$report_verbatim_eq" ]; then
+        cat >&2 <<EOF
+(E) Verbatim-sentence equality — the single most prohibited pattern:
+    lower == "whole oracle sentence here"   ->  decompose into typed building
+                                                blocks: grammar prefix/suffix
+                                                combinators + typed enum variants
+A whole-sentence match handles exactly one card. Identify the grammatical
+structure and parse each axis with combinators so the pattern covers every
+card in the class.
+
+Forbidden in added lines (diff vs ${BASE}):
+${report_verbatim_eq}
+
+EOF
+    fi
+
+    if [ -n "$report_unimpl" ]; then
+        cat >&2 <<EOF
+(F) Hand-constructed Effect::Unimplemented literal — use the constructor:
+    Effect::Unimplemented {                ->  Effect::unimplemented(
+        name: "...".into(),                        "pattern_class_key",
+        description: Some(text.into()),            unparsed_fragment,
+    }                                          )
+The \`name\` must be a stable snake_case pattern-class key (the coverage
+report groups parse gaps by it) — never the raw Oracle text fragment.
+
+Forbidden in added lines (diff vs ${BASE}):
+${report_unimpl}
+
+EOF
+    fi
+
+    if [ -n "$report_crossprod" ]; then
+        cat >&2 <<EOF
+(D) Un-factored cross-product alt — factor each varying axis (PATTERNS.md §8b):
+    alt((                                      ->  recognize((
+        tag("in addition to its other types"),     tag("in addition to "),
+        tag("in addition to their other types"),   alt((tag("its"), tag("their"), ...)),
+        tag("in addition to his other types"),      tag(" other "),
+        ... (8 arms = 4 pronouns x 2 scopes)        opt(tag("creature ")),
+    ))                                              tag("types"),
+                                                ))
+The arm count should be the SUM of per-axis choices, never the PRODUCT.
+
+Flagged blocks (diff vs ${BASE}):
+${report_crossprod}
+
+EOF
+    fi
+
+    cat >&2 <<EOF
+If a use is genuinely structural (not parsing dispatch) — e.g. TextPair
+dual-string stripping, punctuation cleanup on pre-tokenized chunks, or
+word-boundary scanning — annotate the line with:
+
+    // allow-noncombinator: <one-line reason>
+
+See PATTERNS.md section 9 for the criteria on legitimate escape-hatch use.
+
+EOF
+    exit 1
+fi
+
+exit 0

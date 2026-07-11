@@ -1,0 +1,166 @@
+---
+name: add-engine-variant
+description: Runnable checklist gate for any proposed engine enum variant addition. Routes the proposal through the parameterization filter, the categorical-boundary check, and the existence verification before extension is permitted. Invoke this skill BEFORE proposing or implementing any new variant on QuantityRef, QuantityExpr, FilterProp, TargetFilter, ReplacementCondition, AbilityCondition, TriggerCondition, StaticCondition, ChoiceType, DelayedTriggerCondition, Effect, Keyword, ContinuousModification, or any other engine enum.
+---
+
+# add-engine-variant — Engine Enum Extension Gate
+
+## When to invoke
+
+This skill is the gate for any work that would add a variant to an existing engine enum. Run it BEFORE:
+
+- Proposing an engine extension in a plan or task description
+- Drafting an engine PR that adds a variant
+- Approving an audit verdict of "engine extension required"
+- Wiring a converter arm to a not-yet-existing variant
+
+If you find yourself about to type `pub enum Foo { ... NewVariant ... }` in `crates/engine/src/`, pause and run this skill.
+
+## The three filter stages — all must pass
+
+### Stage 1: Existence verification (5-grep protocol)
+
+The variant might already exist under a different engine-native name. The mtgish AST and the engine vocabulary are not 1:1; the engine often has the concept under a different name.
+
+> The canonical engine surface is `data/engine-inventory.json` (gitignored). Run `cargo engine-inventory` to (re)generate it locally before grepping for existing variants.
+
+Run **all five searches** before considering extension:
+
+```bash
+# 1. Direct name search
+rg -n "<concept_keyword>" crates/engine/src/types/
+
+# 2. Inverse concept (engine often expresses "not X" as "X { negated: bool }" or "X { negated: true }")
+rg -n "<inverse_concept>" crates/engine/src/types/
+
+# 3. Inversion-parameter variants
+rg -n "negated: bool|invert|polar" crates/engine/src/types/ability.rs
+
+# 4. Native parser reverse dictionary — how does oracle_nom express this concept?
+rg -n "<concept_keyword>|<engine_concept>" crates/engine/src/parser/oracle_*.rs
+
+# 5. Synthesis layer
+rg -n "<concept_keyword>" crates/engine/src/database/synthesis.rs
+```
+
+**Stage 1 verdicts:**
+
+- **EXISTS_SAME_NAME**: variant exists. Stop. Wire to it.
+- **EXISTS_DIFFERENT_NAME**: concept exists under engine-native name (e.g., mtgish `CreateTriggerUntil` ↔ engine `Effect::CreateDelayedTrigger`). Stop. Map mtgish AST to the existing slot.
+- **EXISTS_AS_PARAMETER**: concept exists as a parameter value of a more general variant (e.g., "untapped" exists as `Tap { negated: true }`). Stop. Use the parameter form.
+- **DOES_NOT_EXIST**: proceed to Stage 2.
+
+If the audit you're acting on said "extension required" and Stage 1 returns EXISTS_*, the audit is wrong. Cite the file:line of the existing slot and refuse the extension.
+
+### Stage 2: Parameterization filter
+
+If the slot truly doesn't exist, the next question is: *should it exist as a sibling, or should the parent enum be parameterized so the new concept becomes a parameter value of an existing variant?*
+
+For each candidate enum, look for the **sibling-cluster smell**:
+
+- Three or more variants that share a name root (`X` / `OpponentX` / `TargetX` / `AllX`)
+- Three or more variants that differ only in a context label (`UnlessControlsCountMatching` / `UnlessControlsMatching` / `UnlessControlsOtherLeq` — the axes are scope and comparator)
+- Three or more variants that differ only in a comparator/aggregator/scope dimension
+- Three or more variants where the structural differences could be expressed as a `(op, scope, target)` tuple
+
+If you find one, **the proposed variant is almost certainly a parameterization gap, not a missing sibling.** Compare:
+
+| Smell | Refactor target |
+|---|---|
+| `LifeTotal` / `OpponentLifeTotal` / `TargetLifeTotal` (+ proposed `LifeTotalAggregate`) | `LifeTotal { player: PlayerScope }` where `PlayerScope` is `Controller \| Target \| Opponent { aggregate } \| AllPlayers { aggregate }` |
+| `HandSize` / `OpponentHandSize` (+ proposed `TargetHandSize`) | `HandSize { player: PlayerScope }` |
+| `UnlessControlsCountMatching` / `UnlessControlsMatching` / `UnlessControlsOtherLeq` | `UnlessQuantity { comparator: Comparator, filter: TargetFilter, count: QuantityExpr }` |
+| `WhenLeavesPlay` / `WhenLeavesPlayFiltered` / `WhenDies` / `WhenDiesOrExiled` | `WhenZoneChange { destination: ZoneFilter, source_filter: TargetFilter }` |
+
+**Stage 2 verdicts:**
+
+- **REFACTOR_FIRST**: sibling-cluster smell detected. Open a parameterization-refactor round (Round Π-N) that consolidates the existing siblings AND absorbs the new concept as a parameter value. Do NOT add the proposed variant. The strict-failure tag is the right place to leave the gap visible while the refactor is pending.
+- **EXTEND_OK**: no sibling-cluster smell — the proposed variant is genuinely orthogonal to existing variants. Proceed to Stage 3.
+
+The compounding-cost rule: one new sibling has near-zero cost; ten siblings make the eventual refactor multi-week as call sites multiply across parser, converter, resolver, and tests.
+
+### Stage 3: Categorical-boundary check
+
+If you've decided extension is appropriate (either as a new variant or as a parameter on an existing one), the proposed parameterization axis MUST lie within a single CR rule section.
+
+Cross-section unification belongs at:
+
+- `TargetFilter` (already enumerates any subject type — players, creatures, planeswalkers, battles, etc.)
+- The effect handler (where rules unify behavior — `Effect::DealDamage` per CR 120 handles all damage subjects uniformly)
+
+NOT at:
+
+- `QuantityRef` / `FilterProp` / `ReplacementCondition` / similar leaf-reference layers
+
+**Examples of category errors to refuse:**
+
+- `Life { target: {Self, Opponent, Creature}, type: {Total, Remaining} }` — conflates CR 119 (player life) with CR 120 (damage marked) and CR 209 (toughness). Three rule sections, three different runtime resolvers. Refuse.
+- `ZoneCount { subject: {Player, Creature, Spell}, zone: ZoneRef }` — subjects belong to different scopes (game-wide for Player, battlefield for Creature, stack for Spell). The unification belongs at `TargetFilter`, not here. Refuse.
+
+**Stage 3 verdicts:**
+
+- **WITHIN_SECTION**: parameterization axis is within a single CR rule section. Extension is approved. Proceed to implementation.
+- **CROSSES_SECTIONS**: refuse the parameterization. Push the unification to `TargetFilter` or the effect handler. Re-design.
+
+## After all three stages pass
+
+If you've made it through all three stages with EXTEND_OK / WITHIN_SECTION verdicts:
+
+1. **Verify CR annotation via grep.** Every new variant carries a CR number, and every CR number is verified by grepping `docs/MagicCompRules.txt` BEFORE the annotation is committed. The 701.x and 702.x ranges are arbitrary sequential assignments and are especially prone to hallucination — do not trust memory.
+
+2. **Update all exhaustive `match` statements.** Use `cargo check -p engine` to find them. NO wildcard fallback arms to silence the compiler — those mask future variant additions.
+
+3. **Classify the variant in the fail-closed ability-scan walker.** If the enum is traversed by `crates/engine/src/game/ability_scan.rs` (the C0 classifier: `Effect`, `QuantityRef`, `QuantityExpr`, `TargetFilter`, `TriggerCondition`, `StaticCondition`, `ReplacementCondition`, `AbilityCondition`, `Duration`, `PlayerFilter`, `ObjectScope`, `ControllerRef`, and their sub-enums), a NEW *variant* fails to compile there (exhaustive, no `_` fallback) — add an explicit per-axis classification arm. A NEW *field on an EXISTING variant* is only caught if that variant's arm destructures without `..`: NONE arms and projected-resource (axis-3) arms already do (compiler-enforced), but CONSERVATIVE arms keep `..`. So if you add a read-bearing field to a variant the walker classifies as CONSERVATIVE, promote its arm to an explicit destructure and classify the field on every axis. The growing-cascade detector's soundness rests on axis 3, so a silently-dropped projected-resource read is a false combo-win.
+
+   The same discipline applies to the walker's **resolution-time choice classifier** (`effect_resolution_choice_freedom` / `ability_resolution_choice_freedom` in `crates/engine/src/game/ability_scan.rs`, consumed by `analysis::resource::loop_states_cover_modulo_growth` item 6): a NEW `Effect` variant fails to compile there until classified. The default classification is `MayPrompt` (fail-closed — an unproven claim only costs a false-negative cover rejection). Classifying a variant as choice-free (`FreeUnlessLifeReplacements`, or any future `Free`-class verdict) is a SOUNDNESS claim — "resolving can never enter a non-priority `WaitingFor`, for ANY state" — and requires (a) a resolver trace cited in the arm's comment (file:line of the handler in `game/effects/` proving no `WaitingFor` raise on any path, including replacement-pipeline calls such as `replace_event`'s `NeedsChoice`), (b) destructuring the arm without `..` so a future field forces re-audit, and (c) updating the pinned guard test (`resolution_choice_verdicts_are_exactly_pinned`). A new field on a `MayPrompt`-classified variant needs no action (`{ .. }` arms are already fail-closed).
+
+   The same discipline applies a THIRD time to the **read/write conflict profiler** (`crates/engine/src/game/ability_rw.rs` — `ability_rw_profile` / `trigger_condition_rw_profile`, consumed by `game::triggers` legacy-path ordering, CR 603.3b): a NEW variant on any traversed enum fails to compile there until classified (exhaustive, no `_` fallback), and a NEW read/write-bearing field on an existing variant is caught only where the arm destructures without `..` — precise arms bind ALL payload fields (the module's binding mandate), but maximal-conservative arms keep `{ .. }`. If you add a read- or write-bearing field to a variant the profiler classifies precisely, classify it in BOTH `ability_scan.rs` (per-axis) AND `ability_rw.rs` (kind+scope read/write profile). An elided read in the profiler is fail-OPEN for the same-event ordering gate (a missed conflict auto-orders an order-dependent group — CR 603.3b unsoundness), so this is a soundness obligation, not bookkeeping.
+
+   The profiler classification is NOT just kind+scope: three **decision-bearing boolean axes** directly drive `profiles_conflict`'s same-event discriminators, and each must be considered for every new variant/field. (a) `reads_member_bound` — does the resolution consult per-source bound storage (`TrackedSet`/`ExiledBySource`/chosen-attribute/attachment carriers, CR 603.10a look-back)? A missed `true` auto-orders distinct sources reading their own piles (the #5072 R3 HIGH-1 failure mode — Mimic Vat class). (b) `reads_event_live` — does it read the triggering object's CURRENT state (`EventSource`/`EventTarget` scopes, CR 608.2h)? (c) `writes_event_object` — does it mutate the shared event object? (b)×(c) together form the same-event write-then-read feed (`reads_and_writes_event_object()`, gated on `event_object_present` — the #5072 R4 failure mode). Mis-setting any of these is a same-event under-prompt (rules-wrong) or an unclassified over-prompt (sweep RED).
+
+   After classifying, **run the full-DB parity sweep** (`FORGE_TEST_FULL_DB=1 cargo test -p engine ordering_parity_sweep` — NOT in default CI, see #5073) and read the delta. The predicate-keyed conservative classes (`se_member_bound_class`, `se_event_object_class`) absorb new corpus members automatically — no allowlist edit for a conservative flip. But the genuine exact-sets (`SAME_EVENT_MEMBER_BOUND_GENUINE`, `SAME_EVENT_EVENT_OBJECT_GENUINE`) are completeness-asserted: if your new variant makes a card genuinely order-observable (order changes reachable outcome STATES, not merely choice points), the card must be ADDED to the const with per-card CR evidence — the assert failing is the system working, never suppress it with a floor bump.
+
+4. **Document runtime status.** If the variant is type-only (no runtime handler yet), add `// RUNTIME: TODO — converter accepts this; engine handler is a no-op stub. CR <X>` on the variant doc-comment. Type-only stubs are acceptable; silent runtime stubs are not.
+
+5. **Pair with converter arm in one commit.** Engine extensions ship with the converter arm that uses them, in a single coherent commit. Don't batch unrelated engine extensions.
+
+6. **Concurrency contract.** Engine extensions ship in a separate PR before the converter PR depending on them, OR in one paired commit if the work is done by a single agent. No half-extensions.
+
+7. **Serialized-surface audit.** Before implementation is complete, determine whether the enum appears in game state, `GameAction`, `WaitingFor`, card-data export, AI/community scenario fixtures, saved test fixtures, client adapter types, or any wire-visible protocol. If yes, add the required serde defaults, migration / compatibility path, regenerated fixture, or protocol version bump. Include a test or CI evidence that existing repo-owned serialized data still loads. If protocol-visible, bump the wire contract or prove no serialized shape changed.
+
+## Anti-patterns this skill prevents
+
+- "Audit said add variant X" → adding sibling without verification (the audit is wrong about a third of the time per session metrics)
+- "Engine doesn't have it" → without grepping for engine-native names (CreateTriggerUntil mtgish ↔ CreateDelayedTrigger engine)
+- "Just one more sibling" → ignoring the sibling-cluster smell and compounding parameterization debt
+- "Unify under one type" → crossing CR rule sections and conflating runtime resolvers
+- "Type-only stub returning a placeholder true/false" → masks runtime correctness; pair with real evaluation logic before shipping. The historical example: `ReplacementCondition::CastViaKicker` initially shipped with a `=> true` stub that silently over-applied to non-kicked spells. Resolved by adding `Option<KickerVariant>` to the variant and tracking `SpellContext.kickers_paid` at cast resolution — the runtime now actually evaluates the gate. Always verify the resolver does what the variant doc-comment claims.
+
+## When refusing
+
+If this skill returns REFUSE_WITH_REFACTOR or REFUSE_WITH_FILTER_LIFT, your output to the orchestrator should include:
+
+1. The exact stage that failed (Stage 1: EXISTS_*, Stage 2: REFACTOR_FIRST, Stage 3: CROSSES_SECTIONS)
+2. The evidence (file:line citations, grep output, sibling cluster identification)
+3. The recommended alternative (the existing slot to use, the refactor round to open, or the layer where unification belongs)
+4. The cards/coverage being deferred and the strict-fail tag to leave in place
+
+Refusing is the correct outcome when any stage fails. Coverage waits, architecture wins.
+
+## Related artifacts
+
+- Workspace `CLAUDE.md` — "Parameterize, don't proliferate" principle (the policy this skill enforces)
+- Crate `mtgish-import/CLAUDE.md` Rule §8 — audit-verdict filter discipline
+- Memory note `feedback_parameterize_dont_proliferate.md` — user directive recording this as a hard rule
+
+## Inputs / outputs
+
+**Invocation:** describe the proposed extension — the enum, the variant, the audit or task that proposed it, the cards it would unlock.
+
+**Output:** one of:
+- `APPROVED: <enum>::<variant> { <fields> }` with CR annotation, runtime-status doc-comment, and ready-to-implement signature
+- `REFUSE_WITH_EXISTING_SLOT: use <engine_path>:<line>` with the wiring to use instead
+- `REFUSE_WITH_REFACTOR: open Round Π-N consolidating <sibling_cluster>` with the proposed parameterized form
+- `REFUSE_WITH_FILTER_LIFT: push to <TargetFilter | effect_handler>` with the cross-section unification target
+
+The output is binding. If APPROVED, proceed. If any REFUSE_*, the extension does not ship until the refusal's recommended alternative is taken.

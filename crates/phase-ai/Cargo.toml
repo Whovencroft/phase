@@ -1,0 +1,56 @@
+[package]
+name = "phase-ai"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+engine = { path = "../engine" }
+serde = { workspace = true }
+serde_json = "1"
+rand = "0.9"
+rand_chacha = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+web-time = "1"
+rayon = { version = "1", optional = true }
+
+[features]
+tune = ["rayon"]
+
+[[bin]]
+name = "ai-duel"
+path = "src/bin/ai_duel.rs"
+test = false
+
+[[bin]]
+name = "ai-tune"
+path = "src/bin/ai_tune.rs"
+test = false
+
+[[bin]]
+name = "ai-commander"
+path = "src/bin/ai_commander.rs"
+test = false
+
+[[bin]]
+name = "ai-bench-state"
+path = "src/bin/ai_bench_state.rs"
+test = false
+
+[[bin]]
+name = "ai-gate"
+path = "src/bin/ai_gate.rs"
+test = false
+
+[[bin]]
+name = "ai-perf-gate"
+path = "src/bin/ai_perf_gate.rs"
+test = false
+
+[[bin]]
+name = "legal-actions-bench"
+path = "src/bin/legal_actions_bench.rs"
+test = false
+
+[dev-dependencies]

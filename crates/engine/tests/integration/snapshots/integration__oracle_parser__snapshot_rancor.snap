@@ -1,0 +1,88 @@
+---
+source: crates/engine/tests/integration/oracle_parser.rs
+expression: result
+---
+{
+  "abilities": [],
+  "triggers": [
+    {
+      "mode": "ChangesZone",
+      "execute": {
+        "kind": "Spell",
+        "effect": {
+          "type": "Bounce",
+          "target": {
+            "type": "SelfRef"
+          },
+          "destination": null
+        },
+        "cost": null,
+        "sub_ability": null,
+        "duration": null,
+        "description": null,
+        "target_prompt": null,
+        "condition": null,
+        "optional_targeting": false,
+        "optional": false,
+        "forward_result": false
+      },
+      "valid_card": {
+        "type": "SelfRef"
+      },
+      "origin": "Battlefield",
+      "destination": "Graveyard",
+      "trigger_zones": [
+        "Graveyard"
+      ],
+      "phase": null,
+      "optional": false,
+      "damage_kind": "Any",
+      "secondary": false,
+      "valid_target": null,
+      "valid_source": null,
+      "description": "When ~ is put into a graveyard from the battlefield, return ~ to its owner's hand.",
+      "constraint": null,
+      "condition": null,
+      "batched": false
+    }
+  ],
+  "statics": [
+    {
+      "mode": "Continuous",
+      "affected": {
+        "type": "Typed",
+        "type_filters": [
+          "Creature"
+        ],
+        "controller": null,
+        "properties": [
+          {
+            "type": "EnchantedBy"
+          }
+        ]
+      },
+      "modifications": [
+        {
+          "type": "AddPower",
+          "value": 2
+        },
+        {
+          "type": "AddToughness",
+          "value": 0
+        },
+        {
+          "type": "AddKeyword",
+          "keyword": "Trample"
+        }
+      ],
+      "condition": null,
+      "affected_zone": null,
+      "effect_zone": null,
+      "active_zones": [],
+      "characteristic_defining": false,
+      "description": "Enchanted creature gets +2/+0 and has trample."
+    }
+  ],
+  "replacements": [],
+  "extractedKeywords": []
+}

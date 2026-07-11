@@ -1,0 +1,22 @@
+# Local default profile (Tilt test-engine/test-ai and manual `cargo nextest run`).
+#
+# fail-fast = false: with concurrent agents working in the tree, one in-progress
+# failure must not cancel the rest of the run — a red resource should report
+# "N failed, here's which" over the full suite, not abandon thousands of tests
+# after the first failure.
+[profile.default]
+fail-fast = false
+
+# CI test profile (activated with `cargo nextest run --profile ci`).
+#
+# nextest already defaults test-threads to the number of logical CPUs, so this
+# profile does NOT raise per-runner parallelism — the CI speedup comes from
+# sharding the test run across multiple runners (see the rust-test matrix in
+# .github/workflows/ci.yml). This profile adds two CI-appropriate behaviors:
+#   - fail-fast = false: a shard reports every failure, not just the first one.
+#   - slow-timeout: warn on any test running past 60s and hard-kill it after
+#     4 periods (240s) as a runaway/hang guard. The slowest legitimate test is
+#     ~12s, so this never trips on healthy tests.
+[profile.ci]
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 4 }
