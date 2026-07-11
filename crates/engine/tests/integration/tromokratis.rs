@@ -31,7 +31,6 @@ const TROMOKRATIS_BLOCK_ORACLE: &str =
 /// Oracle text for Tromokratis's hexproof ability (line 1).
 const TROMOKRATIS_HEXPROOF_ORACLE: &str = "~ has hexproof unless it's attacking or blocking.";
 
-
 fn create_creature(
     state: &mut GameState,
     controller: PlayerId,
