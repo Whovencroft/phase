@@ -667,12 +667,23 @@ pub(crate) fn parse_cast_by_paying_life_alt_cost(text: &str) -> Option<StaticDef
     // CR 118.9 + CR 601.2b: peel an optional once-per-turn frequency prefix
     // ("Once during each of your turns, " / "Once each turn, ") before the
     // "you may cast" grant proper. Absent → `Unlimited`.
-    let (tp, frequency) = match parse_alt_cost_frequency_prefix(tp.lower) {
+    let (tp, frequency, condition) = match parse_alt_cost_frequency_prefix(tp.lower) {
         Ok((rest_lower, freq)) => {
             let consumed = tp.lower.len() - rest_lower.len();
-            (TextPair::new(&tp.original[consumed..], rest_lower), freq)
+            // "once during each of your turns, " implies a DuringYourTurn gate;
+            // "once each turn, " (As Foretold) does not restrict to your turn.
+            let cond = if consumed > 20 {
+                Some(StaticCondition::DuringYourTurn)
+            } else {
+                None
+            };
+            (
+                TextPair::new(&tp.original[consumed..], rest_lower),
+                freq,
+                cond,
+            )
         }
-        Err(_) => (tp, CastFrequency::Unlimited),
+        Err(_) => (tp, CastFrequency::Unlimited, None),
     };
 
     // Prefix: "you may cast ".
@@ -718,7 +729,11 @@ pub(crate) fn parse_cast_by_paying_life_alt_cost(text: &str) -> Option<StaticDef
     let base_filter = if filter_for_parse.is_empty() {
         TargetFilter::Typed(TypedFilter::card())
     } else {
-        parse_type_phrase(filter_for_parse).0
+        let (filter, remainder) = parse_type_phrase(filter_for_parse);
+        if !remainder.trim().is_empty() {
+            return None;
+        }
+        filter
     };
     let affected = apply_spell_keyword_subject_constraints(base_filter, None, None, Vec::new());
 
@@ -728,14 +743,18 @@ pub(crate) fn parse_cast_by_paying_life_alt_cost(text: &str) -> Option<StaticDef
         },
     };
 
-    Some(
-        StaticDefinition::new(StaticMode::CastWithAlternativeCost {
-            cost,
-            timing_permission: None,
-            frequency,
-        })
-        .affected(affected)
-        .description(text.to_string())
-        .active_zones(vec![Zone::Battlefield]),
-    )
+    let mut def = StaticDefinition::new(StaticMode::CastWithAlternativeCost {
+        cost,
+        timing_permission: None,
+        frequency,
+    })
+    .affected(affected)
+    .description(text.to_string())
+    .active_zones(vec![Zone::Battlefield]);
+
+    if let Some(cond) = condition {
+        def = def.condition(cond);
+    }
+
+    Some(def)
 }

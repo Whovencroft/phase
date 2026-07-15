@@ -15,9 +15,11 @@ use engine::types::mana::{ManaCost, ManaCostShard, ManaType, ManaUnit};
 use engine::types::phase::Phase;
 use engine::types::zones::Zone;
 
-const DEMON_ORACLE: &str = "Once during each of your turns, you may cast an \
-    enchantment spell by paying life equal to its mana value rather than paying \
-    its mana cost.";
+const DEMON_ORACLE: &str = concat!(
+    "Once during each of your turns, you may cast an ",
+    "enchantment spell by paying life equal to its mana value rather than paying ",
+    "its mana cost.",
+);
 
 /// CR 118.9 + CR 601.2b: Casting an enchantment with Demon on the battlefield
 /// surfaces an `OptionalCostChoice` offering `PayLife { SelfManaValue }` vs the

@@ -29583,6 +29583,14 @@ fn cast_by_paying_life_alt_cost_demon_of_fates_design() {
         def.mode
     );
 
+    // The "once during each of your turns" prefix must gate on DuringYourTurn.
+    assert_eq!(
+        def.condition,
+        Some(StaticCondition::DuringYourTurn),
+        "expected DuringYourTurn condition, got {:?}",
+        def.condition
+    );
+
     // Affected filter must scope to enchantment spells.
     let filter_str = format!("{:?}", def.affected);
     assert!(
