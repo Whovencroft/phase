@@ -713,11 +713,7 @@ pub(crate) fn parse_cast_by_paying_life_alt_cost(text: &str) -> Option<StaticDef
 
     // Strip trailing "spell" / "spells" before type parsing — "enchantment spell" →
     // "enchantment". `parse_type_phrase` expects bare type words.
-    let filter_for_parse = filter_for_parse
-        .strip_suffix(" spells")
-        .or_else(|| filter_for_parse.strip_suffix(" spell"))
-        .unwrap_or(filter_for_parse)
-        .trim();
+    let filter_for_parse = strip_cost_mod_spell_noun_suffix(filter_for_parse);
 
     let base_filter = if filter_for_parse.is_empty() {
         TargetFilter::Typed(TypedFilter::card())

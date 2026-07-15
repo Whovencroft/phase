@@ -10,7 +10,8 @@ use engine::game::scenario::{GameScenario, P0};
 use engine::types::ability::{AbilityCost, AdditionalCost, QuantityExpr, QuantityRef};
 use engine::types::actions::GameAction;
 use engine::types::game_state::{CastPaymentMode, WaitingFor};
-use engine::types::mana::{ManaCost, ManaCostShard};
+use engine::types::identifiers::ObjectId;
+use engine::types::mana::{ManaCost, ManaCostShard, ManaType, ManaUnit};
 use engine::types::phase::Phase;
 use engine::types::zones::Zone;
 
@@ -163,6 +164,15 @@ fn demon_of_fates_design_does_not_offer_for_non_enchantment() {
             generic: 1,
         })
         .id();
+
+    // Fund the player's mana pool so the creature can actually be cast.
+    scenario.with_mana_pool(
+        P0,
+        vec![
+            ManaUnit::new(ManaType::Green, ObjectId(0), false, vec![]),
+            ManaUnit::new(ManaType::Colorless, ObjectId(0), false, vec![]),
+        ],
+    );
 
     let mut runner = scenario.build();
     let card_id = runner.state().objects[&creature_id].card_id;
