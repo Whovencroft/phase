@@ -157,6 +157,12 @@ pub(crate) fn is_cast_spells_alternative_cost_pattern(lower: &str) -> bool {
         && (scan_contains(lower, "their mana costs") || scan_contains(lower, "its mana cost"))
 }
 
+pub(crate) fn is_once_per_turn_pay_life_alt_cost_pattern(lower: &str) -> bool {
+    lower_starts_with(lower, "once during each of your turns, you may cast ")
+        && scan_contains(lower, "by paying life equal to its mana value")
+        && scan_contains(lower, "rather than paying its mana cost")
+}
+
 pub(crate) fn is_enters_tapped_cant_untap_compound(lower: &str) -> bool {
     let has_enters_tapped = scan_contains(lower, "enters tapped")
         || scan_contains(lower, "enters the battlefield tapped");

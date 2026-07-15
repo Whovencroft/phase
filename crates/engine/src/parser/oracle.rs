@@ -44,10 +44,10 @@ use super::oracle_classifier::{
     is_collect_evidence_alt_cost_pattern, is_compound_turn_limit, is_defiler_cost_pattern,
     is_enters_tapped_cant_untap_compound, is_enters_with_counter_replacement_line,
     is_enters_with_counter_trigger, is_flashback_equal_mana_cost, is_granted_static_line,
-    is_instead_replacement_line, is_opening_hand_begin_game, is_pay_life_as_colored_mana_pattern,
-    is_replacement_pattern, is_spells_alternative_cost_pattern, is_static_pattern,
-    is_vehicle_tier_line, lower_starts_with, should_defer_spell_to_effect,
-    split_flashback_trailing_self_spell_cost_reduction,
+    is_instead_replacement_line, is_once_per_turn_pay_life_alt_cost_pattern,
+    is_opening_hand_begin_game, is_pay_life_as_colored_mana_pattern, is_replacement_pattern,
+    is_spells_alternative_cost_pattern, is_static_pattern, is_vehicle_tier_line, lower_starts_with,
+    should_defer_spell_to_effect, split_flashback_trailing_self_spell_cost_reduction,
 };
 use super::oracle_condition::parse_restriction_condition;
 use super::oracle_cost::{parse_oracle_cost, parse_single_cost, try_parse_cost_reduction};
@@ -91,10 +91,10 @@ use super::oracle_special::{
 use super::oracle_static::{
     is_speed_unlock_sentence, lower_static_ir, parse_alternative_keyword_cost,
     parse_cast_spells_alternative_cost_multi, parse_collect_evidence_alt_cost,
-    parse_flashback_trailing_self_spell_cost_reduction, parse_spells_alternative_cost,
-    parse_static_line, parse_static_line_multi, try_parse_graveyard_keyword_grant_clause,
-    try_parse_graveyard_keyword_grant_static, try_parse_top_of_library_cast_permission,
-    GrantedCastKeywordKind,
+    parse_flashback_trailing_self_spell_cost_reduction, parse_once_per_turn_pay_life_alt_cost,
+    parse_spells_alternative_cost, parse_static_line, parse_static_line_multi,
+    try_parse_graveyard_keyword_grant_clause, try_parse_graveyard_keyword_grant_static,
+    try_parse_top_of_library_cast_permission, GrantedCastKeywordKind,
 };
 use super::oracle_trigger::{lower_trigger_ir, parse_trigger_lines_at_index};
 use super::oracle_util::{
@@ -4509,6 +4509,17 @@ pub(crate) fn parse_oracle_ir(
         if is_alternative_keyword_cost_pattern(&lower) {
             if let Some(static_def) = parse_alternative_keyword_cost(&line) {
                 emitter.static_at(item_line, static_def);
+                i += 1;
+                continue;
+            }
+        }
+
+        // Priority 6c-altcost-f: Once-per-turn pay-life alternative cost (Demon of
+        // Fate's Design). Must precede Priority 7 (is_static_pattern) which would
+        // consume the "once during each of your turns, you may cast" prefix.
+        if is_once_per_turn_pay_life_alt_cost_pattern(&lower) {
+            if let Some(def) = parse_once_per_turn_pay_life_alt_cost(&line) {
+                emitter.static_at(item_line, def);
                 i += 1;
                 continue;
             }

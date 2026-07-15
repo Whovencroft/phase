@@ -646,3 +646,76 @@ fn parse_alternative_keyword_cost_body(text: &str) -> Option<StaticDefinition> {
         .active_zones(vec![Zone::Battlefield]),
     )
 }
+
+/// CR 118.9 + CR 601.2b: Parse a once-per-turn pay-life alternative-cost grant —
+/// "Once during each of your turns, you may cast an enchantment spell by paying
+/// life equal to its mana value rather than paying its mana cost."
+/// (Demon of Fate's Design).
+pub(crate) fn parse_once_per_turn_pay_life_alt_cost(text: &str) -> Option<StaticDefinition> {
+    type VE<'a> = OracleError<'a>;
+
+    let lower = text.to_lowercase();
+    let tp = TextPair::new(text, &lower);
+
+    // Peel the once-per-turn frequency prefix.
+    let (rest_lower, frequency) = parse_alt_cost_frequency_prefix(tp.lower).ok()?;
+    let consumed = tp.lower.len() - rest_lower.len();
+    let tp = TextPair::new(&tp.original[consumed..], rest_lower);
+
+    // "you may cast "
+    let tp = nom_tag_tp(&tp, "you may cast ")?.trim_start();
+
+    // Extract filter text (everything before " by paying life equal to its mana value")
+    let (after_filter_lower, filter_lower) =
+        take_until::<_, _, VE<'_>>(" by paying life equal to its mana value")
+            .parse(tp.lower)
+            .ok()?;
+    let filter_len = filter_lower.len();
+    let filter_original = tp.original[..filter_len].trim();
+    let after_filter = TextPair::new(&tp.original[filter_len..], after_filter_lower);
+
+    // Consume " by paying life equal to its mana value rather than paying its mana cost"
+    nom_tag_tp(
+        &after_filter,
+        " by paying life equal to its mana value rather than paying its mana cost",
+    )?;
+
+    // Strip trailing "spell" / "spells" from filter if present ("an enchantment spell"
+    // → "an enchantment").
+    // allow-noncombinator: structural cleanup on pre-tokenized filter text
+    let filter_cleaned = filter_original
+        .trim_end_matches(" spell")
+        .trim_end_matches(" spells");
+
+    // Strip leading article ("a"/"an") for type parsing.
+    // allow-noncombinator: structural cleanup on pre-tokenized filter text
+    let filter_for_type = filter_cleaned
+        .strip_prefix("an ")
+        .or_else(|| filter_cleaned.strip_prefix("a "))
+        .unwrap_or(filter_cleaned)
+        .trim();
+
+    let base_filter = if filter_for_type.is_empty() {
+        TargetFilter::Typed(TypedFilter::card())
+    } else {
+        parse_type_phrase(filter_for_type).0
+    };
+    let affected = apply_spell_keyword_subject_constraints(base_filter, None, None, Vec::new());
+
+    let cost = AbilityCost::PayLife {
+        amount: QuantityExpr::Ref {
+            qty: QuantityRef::SelfManaValue,
+        },
+    };
+
+    Some(
+        StaticDefinition::new(StaticMode::CastWithAlternativeCost {
+            cost,
+            timing_permission: None,
+            frequency,
+        })
+        .affected(affected)
+        .description(text.to_string())
+        .active_zones(vec![Zone::Battlefield]),
+    )
+}
