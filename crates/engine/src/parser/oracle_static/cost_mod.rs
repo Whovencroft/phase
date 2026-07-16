@@ -733,9 +733,8 @@ pub(crate) fn parse_cast_by_paying_life_alt_cost(text: &str) -> Option<StaticDef
     // the suffix " from your hand" at the end of the filter phrase.
     let filter_lower_for_zone = filter_for_parse.to_lowercase();
     let (filter_for_parse, zone_filter) =
+        // allow-noncombinator: structural suffix removal on a pre-lowered filter phrase.
         if let Some(before) = filter_lower_for_zone.strip_suffix(" from your hand") {
-            // allow-noncombinator: strip_suffix on a pre-lowered local; the zone
-            // qualifier is a fixed English suffix, not a parser-combinator concern.
             (
                 filter_for_parse[..before.len()].trim(),
                 Some(FilterProp::InZone { zone: Zone::Hand }),

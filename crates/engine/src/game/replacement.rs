@@ -4,10 +4,10 @@ use std::sync::LazyLock;
 
 use crate::types::ability::{
     AbilityCost, AbilityDefinition, CombatDamageScope, ControllerRef, DamageModification,
-    DamageTargetFilter, DamageTargetPlayerScope, Effect, EffectScope, PostReplacementContinuation,
-    PreventionAmount, QuantityExpr, QuantityModification, ReplacementCondition,
-    ReplacementDefinition, ReplacementMode, ResolvedAbility, ShieldKind, TapStateChange,
-    TargetFilter, TargetRef,
+    DamageRedirectTarget, DamageTargetFilter, DamageTargetPlayerScope, Effect, EffectScope,
+    PostReplacementContinuation, PreventionAmount, QuantityExpr, QuantityModification,
+    ReplacementCondition, ReplacementDefinition, ReplacementMode, ResolvedAbility, ShieldKind,
+    TapStateChange, TargetFilter, TargetRef,
 };
 use crate::types::card_type::CoreType;
 use crate::types::counter::CounterType;
@@ -814,6 +814,27 @@ fn combine_paused_may_cost(
     }
 }
 
+/// `ReplacementMode::MayCost` has no owner for an activation self-move
+/// continuation. The current card-data grammar has no such MayCost; keep that
+/// structural boundary explicit instead of reintroducing the synchronous raw
+/// activation mover at this call site.
+fn replacement_may_cost_has_self_zone_move(cost: &AbilityCost) -> bool {
+    match cost {
+        AbilityCost::Exile {
+            filter: Some(TargetFilter::SelfRef),
+            ..
+        }
+        | AbilityCost::ReturnToHand {
+            filter: Some(TargetFilter::SelfRef),
+            ..
+        } => true,
+        AbilityCost::Composite { costs } | AbilityCost::OneOf { costs } => {
+            costs.iter().any(replacement_may_cost_has_self_zone_move)
+        }
+        _ => false,
+    }
+}
+
 fn pay_replacement_may_cost(
     state: &mut GameState,
     player: PlayerId,
@@ -821,6 +842,13 @@ fn pay_replacement_may_cost(
     cost: &AbilityCost,
     events: &mut Vec<GameEvent>,
 ) -> MayCostOutcome {
+    if replacement_may_cost_has_self_zone_move(cost) {
+        debug_assert!(
+            false,
+            "ReplacementMode::MayCost cannot own an activation self-move continuation"
+        );
+        return MayCostOutcome::Unpaid;
+    }
     if !cost.is_payable(state, player, source_id) {
         return MayCostOutcome::Unpaid;
     }
@@ -898,7 +926,7 @@ fn pay_replacement_may_cost(
             // the interactive pause. Snapshot it to distinguish a synchronous
             // forced/auto discard (`Paid`, no choice) from a paused one.
             let prior_waiting_for = state.waiting_for.clone();
-            match crate::game::costs::pay_ability_cost_for_resolution(
+            match crate::game::costs::pay_ability_cost_for_replacement_may_cost(
                 state, player, cost, &ability, events,
             ) {
                 Ok(crate::game::costs::PaymentOutcome::Paid) => {
@@ -933,7 +961,7 @@ fn pay_replacement_may_cost(
                 player,
             );
             let prior_waiting_for = state.waiting_for.clone();
-            match crate::game::costs::pay_ability_cost_for_resolution(
+            match crate::game::costs::pay_ability_cost_for_replacement_may_cost(
                 state, player, cost, &ability, events,
             ) {
                 Ok(crate::game::costs::PaymentOutcome::Paid) => {
@@ -959,7 +987,15 @@ fn pay_replacement_may_cost(
                 Ok(crate::game::costs::PaymentOutcome::Failed { .. }) | Err(_) => false,
             }
         }
-        _ => crate::game::casting::pay_ability_cost(state, player, source_id, cost, events).is_ok(),
+        _ => match crate::game::casting::pay_ability_cost_for_activation(
+            state, player, source_id, cost, None, events,
+        ) {
+            Ok(crate::game::costs::PaymentOutcome::Paid) => true,
+            Ok(crate::game::costs::PaymentOutcome::Paused { remaining_cost }) => {
+                return MayCostOutcome::PausedForChoice { remaining_cost };
+            }
+            Ok(crate::game::costs::PaymentOutcome::Failed { .. }) | Err(_) => false,
+        },
     };
     if paid {
         MayCostOutcome::Paid
@@ -1134,6 +1170,178 @@ fn redirect_chosen_object_for_rid(state: &GameState, rid: ReplacementId) -> Opti
     }
 }
 
+/// CR 614.9: Read back the `redirect_target` filter stored on the matched
+/// replacement. Mirrors `redirect_chosen_object_for_rid`'s repl-lookup shape,
+/// but `TargetFilter` (unlike the `Copy` `ShieldKind`) is not `Copy`, so the
+/// stored filter is cloned. Used by the continuous `ShieldKind::Prevention`
+/// path to detect a `TargetFilter::SelfRef` redirect (Palisade Giant, Veteran
+/// Bodyguard, Weathered Bodyguards) and reuse the shared redirection mechanics.
+fn redirect_target_for_rid(state: &GameState, rid: ReplacementId) -> Option<TargetFilter> {
+    let repl = if rid.source == ObjectId(0) {
+        state.pending_damage_replacements.get(rid.index)
+    } else {
+        state
+            .objects
+            .get(&rid.source)
+            .and_then(|obj| obj.replacement_definitions.get(rid.index))
+    };
+    repl.and_then(|repl| repl.redirect_target.clone())
+}
+
+/// CR 614.9: Resolve and apply a damage redirection. Shared by the one-shot
+/// `ShieldKind::Redirection` path (always consumes the shield afterward) and
+/// the continuous `ShieldKind::Prevention` + `redirect_target` path (never
+/// consumes `PreventionAmount::All` shields — that continuous, re-firing
+/// lifecycle is governed by the host permanent's presence, not by depletion).
+/// `consume_after_redirect` reflects which `ShieldKind` invariant governs this
+/// shield's lifecycle at its call site — a fixed, hard-coded literal at both of
+/// this function's two call sites, never a value threaded from parsed Oracle
+/// text or player choice, so a bool is the idiomatic choice over a
+/// purpose-built enum with no third state to grow into.
+#[allow(clippy::too_many_arguments)]
+fn redirect_damage_event(
+    state: &mut GameState,
+    rid: ReplacementId,
+    recipient: DamageRedirectTarget,
+    redirect_amount: PreventionAmount,
+    source_id: ObjectId,
+    target: TargetRef,
+    damage_amount: u32,
+    is_combat: bool,
+    applied: HashSet<AppliedReplacementKey>,
+    consume_after_redirect: bool,
+    events: &mut Vec<GameEvent>,
+) -> ApplyResult {
+    // CR 614.7a: A source that would deal 0 damage deals no damage at all —
+    // there is no damage event to redirect. Pass through and do not consume the
+    // shield (no opportunity was spent).
+    if damage_amount == 0 {
+        return ApplyResult::Modified(ProposedEvent::Damage {
+            source_id,
+            target,
+            amount: damage_amount,
+            is_combat,
+            applied,
+        });
+    }
+
+    let chosen = redirect_chosen_object_for_rid(state, rid);
+    let new_recipient = super::effects::create_damage_replacement::resolve_redirect_recipient(
+        state, recipient, rid.source, chosen,
+    )
+    .filter(|new_target| {
+        super::effects::create_damage_replacement::redirect_recipient_is_legal(state, new_target)
+    });
+
+    match redirect_amount {
+        PreventionAmount::All => {
+            // CR 614.5: The one-shot opportunity is spent on this event whether
+            // or not the redirection succeeds — consume the shield in both the
+            // success and the "does nothing" (illegal recipient per CR 614.9)
+            // outcomes. Continuous `ShieldKind::Prevention` + `redirect_target`
+            // shields pass `consume_after_redirect: false` and re-fire for every
+            // damage event within their lifetime.
+            if consume_after_redirect {
+                consume_prevention_shield(state, rid, None);
+            }
+
+            // CR 614.9: A legal recipient takes the damage instead; an illegal
+            // one (left the battlefield, no longer a battle/creature/
+            // planeswalker, or a player who left the game) makes the redirection
+            // do nothing, so the damage stays on the original recipient.
+            ApplyResult::Modified(ProposedEvent::Damage {
+                source_id,
+                target: new_recipient.unwrap_or(target),
+                amount: damage_amount,
+                is_combat,
+                applied,
+            })
+        }
+        PreventionAmount::AllBut(_) => {
+            // CR 615.1a vs CR 614.9: `AllBut` is exclusively a *prevention*
+            // amount ("prevent all but N damage", Temple Altisaur) and is never
+            // assigned to a `ShieldKind::Redirection`. The continuous
+            // `ShieldKind::Prevention` call site gates on
+            // `matches!(amount, PreventionAmount::All)` before reaching here, so
+            // an `AllBut` prevention shield with a `redirect_target` never routes
+            // into this helper either. Inventing a partial-redirect rule here
+            // would violate CR 614.9 (an illegal recipient must make the
+            // redirection do nothing rather than silently drop the excess), so
+            // this state is treated as impossible rather than guessed at.
+            unreachable!("PreventionAmount::AllBut is never assigned to a ShieldKind::Redirection")
+        }
+        PreventionAmount::Next(n) => {
+            let redirected_amount = damage_amount.min(n);
+            let remaining_amount = damage_amount.saturating_sub(redirected_amount);
+            if consume_after_redirect {
+                if redirected_amount == n {
+                    consume_prevention_shield(state, rid, None);
+                } else {
+                    update_redirection_shield(
+                        state,
+                        rid,
+                        recipient,
+                        PreventionAmount::Next(n - redirected_amount),
+                    );
+                }
+            }
+
+            if let Some(new_target) = new_recipient.filter(|_| redirected_amount > 0) {
+                let redirected_event = ProposedEvent::Damage {
+                    source_id,
+                    target: new_target,
+                    amount: redirected_amount,
+                    is_combat,
+                    applied: applied.clone(),
+                };
+                match replace_event(state, redirected_event, events) {
+                    ReplacementResult::Execute(event) => {
+                        let ctx = super::effects::deal_damage::DamageContext::from_source(
+                            state, source_id,
+                        )
+                        .unwrap_or_else(|| {
+                            let controller = state
+                                .objects
+                                .get(&source_id)
+                                .map(|obj| obj.controller)
+                                .unwrap_or(PlayerId(0));
+                            super::effects::deal_damage::DamageContext::fallback(
+                                source_id, controller,
+                            )
+                        });
+                        let _ = super::effects::deal_damage::apply_damage_after_replacement(
+                            state, &ctx, event, is_combat, events,
+                        );
+                    }
+                    ReplacementResult::Prevented => {}
+                    ReplacementResult::NeedsChoice(_) => {
+                        state.pending_replacement = None;
+                    }
+                }
+            } else {
+                return ApplyResult::Modified(ProposedEvent::Damage {
+                    source_id,
+                    target,
+                    amount: damage_amount,
+                    is_combat,
+                    applied,
+                });
+            }
+
+            if remaining_amount == 0 {
+                return ApplyResult::Prevented;
+            }
+            ApplyResult::Modified(ProposedEvent::Damage {
+                source_id,
+                target,
+                amount: remaining_amount,
+                is_combat,
+                applied,
+            })
+        }
+    }
+}
+
 /// CR 614.1a: Apply damage modification or prevention from the replacement definition.
 fn damage_done_applier(
     event: ProposedEvent,
@@ -1268,133 +1476,21 @@ fn damage_done_applier(
             applied,
         } = event
         {
-            // CR 614.7a: A source that would deal 0 damage deals no damage at
-            // all — there is no damage event to redirect. Pass through and do
-            // not consume the shield (no opportunity was spent).
-            if damage_amount == 0 {
-                return ApplyResult::Modified(ProposedEvent::Damage {
-                    source_id,
-                    target,
-                    amount: damage_amount,
-                    is_combat,
-                    applied,
-                });
-            }
-
-            let chosen = redirect_chosen_object_for_rid(state, rid);
-            let new_recipient =
-                super::effects::create_damage_replacement::resolve_redirect_recipient(
-                    state, recipient, rid.source, chosen,
-                )
-                .filter(|new_target| {
-                    super::effects::create_damage_replacement::redirect_recipient_is_legal(
-                        state, new_target,
-                    )
-                });
-
-            match redirect_amount {
-                PreventionAmount::All => {
-                    // CR 614.5: The one-shot opportunity is spent on this event
-                    // whether or not the redirection succeeds — consume the
-                    // shield in both the success and the "does nothing" (illegal
-                    // recipient per CR 614.9) outcomes.
-                    consume_prevention_shield(state, rid, None);
-
-                    // CR 614.9: A legal recipient takes the damage instead; an
-                    // illegal one (left the battlefield, no longer a
-                    // battle/creature/planeswalker, or a player who left the
-                    // game) makes the redirection do nothing, so the damage
-                    // stays on the original recipient.
-                    return ApplyResult::Modified(ProposedEvent::Damage {
-                        source_id,
-                        target: new_recipient.unwrap_or(target),
-                        amount: damage_amount,
-                        is_combat,
-                        applied,
-                    });
-                }
-                PreventionAmount::AllBut(_) => {
-                    // CR 615.1a vs CR 614.9: `AllBut` is exclusively a *prevention*
-                    // amount ("prevent all but N damage", Temple Altisaur) and is
-                    // never produced for a redirection shield — `redirection_shield`
-                    // defaults a missing amount to `PreventionAmount::All` and every
-                    // other redirect constructor uses `PreventionAmount::Next`.
-                    // Inventing a partial-redirect rule here would violate CR 614.9
-                    // (an illegal recipient must make the redirection do nothing
-                    // rather than silently drop the excess), so this state is
-                    // treated as impossible rather than guessed at.
-                    unreachable!(
-                        "PreventionAmount::AllBut is never assigned to a ShieldKind::Redirection"
-                    )
-                }
-                PreventionAmount::Next(n) => {
-                    let redirected_amount = damage_amount.min(n);
-                    let remaining_amount = damage_amount.saturating_sub(redirected_amount);
-                    if redirected_amount == n {
-                        consume_prevention_shield(state, rid, None);
-                    } else {
-                        update_redirection_shield(
-                            state,
-                            rid,
-                            recipient,
-                            PreventionAmount::Next(n - redirected_amount),
-                        );
-                    }
-
-                    if let Some(new_target) = new_recipient.filter(|_| redirected_amount > 0) {
-                        let redirected_event = ProposedEvent::Damage {
-                            source_id,
-                            target: new_target,
-                            amount: redirected_amount,
-                            is_combat,
-                            applied: applied.clone(),
-                        };
-                        match replace_event(state, redirected_event, events) {
-                            ReplacementResult::Execute(event) => {
-                                let ctx = super::effects::deal_damage::DamageContext::from_source(
-                                    state, source_id,
-                                )
-                                .unwrap_or_else(|| {
-                                    let controller = state
-                                        .objects
-                                        .get(&source_id)
-                                        .map(|obj| obj.controller)
-                                        .unwrap_or(PlayerId(0));
-                                    super::effects::deal_damage::DamageContext::fallback(
-                                        source_id, controller,
-                                    )
-                                });
-                                let _ = super::effects::deal_damage::apply_damage_after_replacement(
-                                    state, &ctx, event, is_combat, events,
-                                );
-                            }
-                            ReplacementResult::Prevented => {}
-                            ReplacementResult::NeedsChoice(_) => {
-                                state.pending_replacement = None;
-                            }
-                        }
-                    } else {
-                        return ApplyResult::Modified(ProposedEvent::Damage {
-                            source_id,
-                            target,
-                            amount: damage_amount,
-                            is_combat,
-                            applied,
-                        });
-                    }
-
-                    if remaining_amount == 0 {
-                        return ApplyResult::Prevented;
-                    }
-                    return ApplyResult::Modified(ProposedEvent::Damage {
-                        source_id,
-                        target,
-                        amount: remaining_amount,
-                        is_combat,
-                        applied,
-                    });
-                }
-            }
+            // CR 614.9: one-shot redirection shields always consume their single
+            // opportunity after the redirect resolves (or does nothing).
+            return redirect_damage_event(
+                state,
+                rid,
+                recipient,
+                redirect_amount,
+                source_id,
+                target,
+                damage_amount,
+                is_combat,
+                applied,
+                true,
+                events,
+            );
         }
         return ApplyResult::Modified(event);
     }
@@ -1424,6 +1520,42 @@ fn damage_done_applier(
             applied,
         } = event
         {
+            // CR 614.9: Continuous "all damage that would be dealt to you ... is
+            // dealt to this creature instead" statics (Palisade Giant, Veteran
+            // Bodyguard, Weathered Bodyguards) parse to a `ShieldKind::Prevention`
+            // shield carrying `redirect_target: Some(SelfRef)`. This is a
+            // *redirection* (CR 614.9), not a prevention (CR 615) — route it
+            // through the shared redirection mechanics with
+            // `consume_after_redirect: false` so the continuous shield re-fires
+            // for every damage event within its lifetime, and skip the
+            // DamagePrevented / `combat_prevention_tally` bookkeeping entirely
+            // (no damage is prevented — it is dealt to a new recipient). The
+            // `matches!(amount, PreventionAmount::All)` conjunct is required:
+            // `redirect_damage_event`'s body treats `PreventionAmount::AllBut` as
+            // `unreachable!()` (an invariant of `ShieldKind::Redirection`, not of
+            // `ShieldKind::Prevention`, which legitimately uses `AllBut` for
+            // Temple Altisaur), so any `AllBut`/`Next` prevention shield — even a
+            // hypothetical future one carrying a `redirect_target` — falls
+            // through to the ordinary prevention arms below rather than reaching
+            // that dead code.
+            if redirect_target_for_rid(state, rid) == Some(TargetFilter::SelfRef)
+                && matches!(amount, PreventionAmount::All)
+            {
+                return redirect_damage_event(
+                    state,
+                    rid,
+                    DamageRedirectTarget::SourceObject,
+                    PreventionAmount::All,
+                    source_id,
+                    target,
+                    dmg,
+                    is_combat,
+                    applied,
+                    false,
+                    events,
+                );
+            }
+
             let prevented_amount;
             let result;
             // CR 510.2 + CR 615.7: A `Prevention::All` shield encountered during a
@@ -3403,27 +3535,49 @@ fn counter_applier(
     ApplyResult::Modified(event)
 }
 
-// --- 15. Attached (ZoneChange to Battlefield for attachments) ---
+// --- 15. Attached (ZoneChange to Battlefield for attachments; Effect::Attach becoming attached) ---
 
 fn attached_matcher(event: &ProposedEvent, _source: ObjectId, state: &GameState) -> bool {
-    if let ProposedEvent::ZoneChange { object_id, to, .. } = event {
-        if *to != Zone::Battlefield {
-            return false;
+    let attachment_id = match event {
+        ProposedEvent::ZoneChange {
+            object_id,
+            to,
+            attach_to,
+            ..
+        } => {
+            // CR 303.4f + CR 301.5b: an Aura/Equipment/Fortification entering
+            // the battlefield is only "becoming attached" (and thus only then
+            // eligible to trigger an "as ~ becomes attached, choose …"
+            // replacement) when this zone change actually carries an attach
+            // target. Equipment enters the battlefield like other artifacts —
+            // NOT attached to a creature (CR 301.5b) — so a bare Equipment
+            // ETB must NOT fire the attach-time replacement.
+            if *to != Zone::Battlefield || attach_to.is_none() {
+                return false;
+            }
+            *object_id
         }
-        // Check if the entering object is an attachment (Aura or Equipment)
-        state
-            .objects
-            .get(object_id)
-            .map(|obj| {
-                obj.card_types
-                    .subtypes
-                    .iter()
-                    .any(|s| s == "Aura" || s == "Equipment")
-            })
-            .unwrap_or(false)
-    } else {
-        false
-    }
+        // CR 701.3a: An already-battlefield Aura/Equipment/Fortification
+        // becoming attached via `Effect::Attach` (Equip, or any other "attach
+        // ~ to" effect) is the same "becomes attached" event as an Aura
+        // entering already attached — just without the accompanying zone
+        // change. `valid_card` (typically `SelfRef`) scopes this to the
+        // specific attachment's own "as it becomes attached, choose …"
+        // definition (Psychic Paper).
+        ProposedEvent::Attach { attachment_id, .. } => *attachment_id,
+        _ => return false,
+    };
+    // Check if the (would-be) attached object is an attachment (Aura or Equipment)
+    state
+        .objects
+        .get(&attachment_id)
+        .map(|obj| {
+            obj.card_types
+                .subtypes
+                .iter()
+                .any(|s| s == "Aura" || s == "Equipment")
+        })
+        .unwrap_or(false)
 }
 
 fn attached_applier(
@@ -4820,6 +4974,9 @@ fn replacement_event_keys_for_event(event: &ProposedEvent) -> Vec<ReplacementEve
         }
         ProposedEvent::Planeswalk { .. } => {
             push_replacement_event_key(&mut keys, ReplacementEvent::Planeswalk);
+        }
+        ProposedEvent::Attach { .. } => {
+            push_replacement_event_key(&mut keys, ReplacementEvent::Attached);
         }
         ProposedEvent::Sacrifice { .. } | ProposedEvent::EmptyManaPool { .. } => {}
     }
@@ -7388,7 +7545,7 @@ fn continue_replacement_impl(
                 // the resume finishes any `may_cost_remaining`. The carried
                 // `Execute` payload is inert — the flag short-circuits the caller
                 // before it is read.
-                state.pending_replacement = Some(crate::types::game_state::PendingReplacement {
+                let outer_replacement = crate::types::game_state::PendingReplacement {
                     proposed: proposed.clone(),
                     sacrifice_provenance: reparked_sacrifice_provenance,
                     candidates: reparked_candidates,
@@ -7402,7 +7559,21 @@ fn continue_replacement_impl(
                     lifelink_bonus: 0,
                     may_cost_paid: true,
                     may_cost_remaining: remaining_cost,
-                });
+                };
+                if let Some(crate::types::game_state::PendingCostMoveResume::ReplacementMayCost {
+                    outer_replacement: parked_outer,
+                    ..
+                }) = state.pending_cost_move_resume.as_mut()
+                {
+                    // CR 614.12a + CR 616.1: an inner cost move already owns
+                    // `pending_replacement` for its Moved replacement choice.
+                    // Keep that live inner prompt there and retain this outer
+                    // optional replacement only in the typed cost continuation.
+                    *parked_outer = Some(Box::new(outer_replacement));
+                    state.replacement_may_cost_paused = true;
+                    return ReplacementResult::Execute(proposed);
+                }
+                state.pending_replacement = Some(outer_replacement);
                 state.replacement_may_cost_paused = true;
                 return ReplacementResult::Execute(proposed);
             }

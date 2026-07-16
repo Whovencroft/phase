@@ -10,7 +10,7 @@ use crate::types::ability::{EffectScope, TapStateChange};
 use crate::types::counter::CounterType;
 use crate::types::events::{GameEvent, ManaTapState};
 use crate::types::game_state::{
-    GameState, PendingCounterPostAction, TokenEntryEventEmission, WaitingFor,
+    GameState, PendingCostMoveResume, PendingCounterPostAction, TokenEntryEventEmission, WaitingFor,
 };
 use crate::types::identifiers::ObjectId;
 use crate::types::keywords::Keyword;
@@ -411,6 +411,34 @@ pub(super) fn handle_replacement_choice(
                 // does not prevent the turn-up), so there is nothing to apply on
                 // the post-replacement Execute path here.
                 ProposedEvent::TurnFaceUp { .. } => {}
+                // CR 701.3a + CR 616.1: Attach accepted after a replacement
+                // ordering choice (2+ "as it becomes attached, choose …"
+                // definitions on the same attachment). Unreachable today — the
+                // parser pool has exactly one `ReplacementEvent::Attached`
+                // producer (Psychic Paper) — but wired for correctness if a
+                // future card shares the class. `source_id` for the
+                // `EffectResolved` push is approximated as `attachment_id`:
+                // `ProposedEvent::Attach` doesn't carry the original ability's
+                // source, which only differs from the attachment for a
+                // non-Equip "attach ~ to" effect (e.g. a triggered ability on
+                // another permanent) — no such card has BOTH that shape AND a
+                // second Attached-event replacement to order against today.
+                ProposedEvent::Attach {
+                    attachment_id,
+                    target_id,
+                    ..
+                } => {
+                    if let Some(waiting_for) = crate::game::effects::attach::deliver_attach(
+                        state,
+                        attachment_id,
+                        target_id,
+                        attachment_id,
+                        events,
+                    ) {
+                        state.waiting_for = waiting_for;
+                        return Ok(state.waiting_for.clone());
+                    }
+                }
                 // CR 121.1 + CR 614.6 + CR 614.11: Draw accepted after
                 // replacement choice — delegate to the shared post-replacement
                 // helper so library-zone move + per-turn accounting match the
@@ -674,7 +702,14 @@ pub(super) fn handle_replacement_choice(
             state.waiting_for = waiting_for.clone();
 
             let mut replacement_ctx = None;
-            if let Some(ctx) = state.pending_spell_resolution.take() {
+            if zone_change_object_id
+                .zip(state.pending_spell_resolution.as_ref())
+                .is_some_and(|(object_id, ctx)| object_id == ctx.object_id)
+            {
+                let ctx = state
+                    .pending_spell_resolution
+                    .take()
+                    .expect("matching spell-resolution context was checked above");
                 if enters_battlefield {
                     apply_pending_spell_resolution(state, &ctx, events);
                 }
@@ -705,6 +740,23 @@ pub(super) fn handle_replacement_choice(
                 ) {
                     waiting_for = next_waiting_for;
                 }
+            }
+
+            // CR 702.143a-c + CR 614.1 + CR 616.1: A Foretell cost move may
+            // deliver its card and then surface an interactive post-replacement
+            // effect. Complete the special action at the delivery boundary,
+            // before preserving that non-priority prompt, so the card cannot be
+            // left face up or with a stranded cost continuation.
+            if zone_change_object_id.is_some_and(|object_id| {
+                matches!(
+                    state.pending_cost_move_resume.as_ref(),
+                    Some(PendingCostMoveResume::Foretell {
+                        object_id: pending_object_id,
+                        ..
+                    }) if *pending_object_id == object_id
+                )
+            }) {
+                super::casting::complete_foretell_cost_move(state, events);
             }
 
             // CR 805.4b: a draw-step draw that paused on the choice just
@@ -913,8 +965,46 @@ pub(super) fn handle_replacement_choice(
                 }
             }
 
-            // CR 601.2h + CR 602.2b + CR 616.1: Resume cast/activation cost payment paused for a
-            // replacement choice during discard or sacrifice cost payment.
+            // CR 601.2h + CR 602.2b + CR 616.1: Resume a cast or activation
+            // cost move after the replacement delivered its current object.
+            if matches!(waiting_for, WaitingFor::Priority { .. })
+                && matches!(
+                    state.pending_cost_move_resume,
+                    Some(PendingCostMoveResume::Cast { .. })
+                )
+            {
+                waiting_for = super::casting_costs::resume_interrupted_cost_payment(
+                    state,
+                    events,
+                    Some(replacement_action_event_start),
+                )?;
+            }
+
+            // CR 614.12a + CR 616.1: Finish the inner forced MayCost moves
+            // before re-entering the optional outer replacement they paid for.
+            if matches!(waiting_for, WaitingFor::Priority { .. })
+                && matches!(
+                    state.pending_cost_move_resume,
+                    Some(PendingCostMoveResume::ReplacementMayCost { .. })
+                )
+            {
+                waiting_for = super::costs::resume_replacement_may_cost_move(state, events)?;
+            }
+
+            // CR 702.143a-c + CR 614.1 + CR 616.1: Finish a foretell special
+            // action after its replacement-aware move is delivered. The
+            // foretell resume stamps the card only if it arrived in exile.
+            if matches!(waiting_for, WaitingFor::Priority { .. })
+                && matches!(
+                    state.pending_cost_move_resume,
+                    Some(PendingCostMoveResume::Foretell { .. })
+                )
+            {
+                waiting_for = super::casting::resume_foretell_cost_move(state, events);
+            }
+
+            // CR 601.2h + CR 602.2b + CR 616.1: Resume a non-move cast or
+            // activation cost payment paused during discard or sacrifice.
             if matches!(waiting_for, WaitingFor::Priority { .. })
                 && (state.pending_cast.is_some() || state.pending_discard_for_cost.is_some())
             {
@@ -1080,6 +1170,38 @@ pub(super) fn handle_replacement_choice(
                 };
                 crate::game::zone_pipeline::drain_pending_batch_deliveries(state, events);
                 return Ok(state.waiting_for.clone());
+            }
+            // CR 601.2h + CR 602.2b + CR 614.12a + CR 616.1: A fully
+            // substituted cost move still completes that cost-payment step.
+            // No fresh prompt remains at this point, so restore the normal
+            // reducer boundary before draining its typed continuation.
+            state.waiting_for = WaitingFor::Priority {
+                player: state.active_player,
+            };
+            if matches!(
+                state.pending_cost_move_resume,
+                Some(PendingCostMoveResume::Cast { .. })
+            ) {
+                return super::casting_costs::resume_interrupted_cost_payment(
+                    state,
+                    events,
+                    Some(replacement_action_event_start),
+                );
+            }
+            if matches!(
+                state.pending_cost_move_resume,
+                Some(PendingCostMoveResume::ReplacementMayCost { .. })
+            ) {
+                return super::costs::resume_replacement_may_cost_move(state, events);
+            }
+            // CR 702.143a-c + CR 614.1 + CR 616.1: A fully substituted
+            // foretell move completes the special action without stamping a
+            // card that was not delivered to exile.
+            if matches!(
+                state.pending_cost_move_resume,
+                Some(PendingCostMoveResume::Foretell { .. })
+            ) {
+                return Ok(super::casting::resume_foretell_cost_move(state, events));
             }
             // CR 608.3e: If the ETB was prevented during spell resolution,
             // the permanent goes to the graveyard instead.

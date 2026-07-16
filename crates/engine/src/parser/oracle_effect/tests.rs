@@ -20435,6 +20435,142 @@ fn become_basic_land_type_of_choice() {
     );
 }
 
+// CR 205.1b: Navigator's Compass — "{T}: Until end of turn, target land you
+// control becomes the basic land type of your choice in addition to its
+// other types." (Oracle text verified against Scryfall.) Previously
+// `try_parse_become_choice` anchored on the choice phrase literally ending in
+// "of your choice"; the trailing "in addition to its other types" marker made
+// the whole predicate fall through unparsed (the animation fallback can't
+// tokenize "of your choice" as a type either), so the ability did nothing.
+#[test]
+fn become_basic_land_type_of_choice_in_addition_to_other_types() {
+    let clause = parse_effect_clause(
+        "target land you control becomes the basic land type of your choice \
+         in addition to its other types until end of turn",
+        &mut ParseContext::default(),
+    );
+    assert!(
+        matches!(
+            clause.effect,
+            Effect::Choose {
+                choice_type: ChoiceType::BasicLandType,
+                ..
+            }
+        ),
+        "Expected Choose {{ BasicLandType }}, got {:?}",
+        clause.effect
+    );
+    let apply = clause
+        .sub_ability
+        .as_ref()
+        .expect("choice must chain an apply sub-ability");
+    let Effect::GenericEffect {
+        static_abilities, ..
+    } = &*apply.effect
+    else {
+        panic!("expected GenericEffect apply half, got {:?}", apply.effect);
+    };
+    assert_eq!(
+        static_abilities[0].modifications,
+        vec![ContinuousModification::AddChosenSubtype {
+            kind: ChosenSubtypeKind::BasicLandType,
+        }],
+        "the retention marker must not introduce RemoveAllSubtypes or change \
+         the additive AddChosenSubtype modification: {:?}",
+        static_abilities[0].modifications
+    );
+}
+
+// Sibling coverage on the creature-type choice axis, proving the fix
+// generalizes across `try_parse_become_choice`'s three choice kinds rather
+// than special-casing the land branch alone.
+#[test]
+fn become_creature_type_of_choice_in_addition_to_other_types() {
+    let clause = parse_effect_clause(
+        "target creature becomes the creature type of your choice in addition \
+         to its other types until end of turn",
+        &mut ParseContext::default(),
+    );
+    assert!(
+        matches!(
+            clause.effect,
+            Effect::Choose {
+                choice_type: ChoiceType::CreatureType { .. },
+                ..
+            }
+        ),
+        "Expected Choose {{ CreatureType }}, got {:?}",
+        clause.effect
+    );
+    let apply = clause
+        .sub_ability
+        .as_ref()
+        .expect("choice must chain an apply sub-ability");
+    let Effect::GenericEffect {
+        static_abilities, ..
+    } = &*apply.effect
+    else {
+        panic!("expected GenericEffect apply half, got {:?}", apply.effect);
+    };
+    assert_eq!(
+        static_abilities[0].modifications,
+        vec![ContinuousModification::AddChosenSubtype {
+            kind: ChosenSubtypeKind::CreatureType,
+        }]
+    );
+}
+
+// No-regression guard: the pre-existing "and <keyword grant>" trailing form
+// (Mondo Gecko) must still parse — the new marker-strip must not interfere
+// when no "in addition to its other types" marker is present.
+#[test]
+fn become_color_of_choice_still_chains_trailing_keyword_grant() {
+    use crate::types::ability::ColorChangeMode;
+    use crate::types::keywords::{HexproofFilter, Keyword};
+
+    let clause = parse_effect_clause(
+        "Target creature becomes the color of your choice and gains hexproof \
+         from that color until end of turn",
+        &mut ParseContext::default(),
+    );
+    assert!(matches!(
+        clause.effect,
+        Effect::Choose {
+            choice_type: ChoiceType::Color { .. },
+            ..
+        }
+    ));
+    let apply = clause
+        .sub_ability
+        .as_ref()
+        .expect("choice must chain an apply sub-ability");
+    let Effect::GenericEffect {
+        static_abilities, ..
+    } = &*apply.effect
+    else {
+        panic!("expected GenericEffect apply half, got {:?}", apply.effect);
+    };
+    assert!(
+        static_abilities[0]
+            .modifications
+            .contains(&ContinuousModification::AddChosenColor {
+                mode: ColorChangeMode::Set,
+            }),
+        "{:?}",
+        static_abilities[0].modifications
+    );
+    assert!(
+        static_abilities[0].modifications.iter().any(|m| matches!(
+            m,
+            ContinuousModification::AddKeyword {
+                keyword: Keyword::HexproofFrom(HexproofFilter::ChosenColor)
+            }
+        )),
+        "trailing keyword grant must still chain: {:?}",
+        static_abilities[0].modifications
+    );
+}
+
 #[test]
 fn parse_play_from_exile_this_turn() {
     // CR 400.7i + CR 608.2c: A standalone "you may play that card this turn"
@@ -41900,6 +42036,282 @@ fn non_join_forces_x_mana_payment_remains_optional() {
     );
 }
 
+// ---------------------------------------------------------------------
+// Power Leak / Errant Minion / Liege of the Hollows — the paid-mana
+// where-X generalization (Fix 1), the deal-then-prevent fold (Fix 2),
+// and the Enchant-noun trigger-scope generalization (Fix 3).
+// CR 601.2h / CR 608.2c / CR 615.1a / CR 615.4 / CR 702.5a.
+// ---------------------------------------------------------------------
+
+// Verbatim Oracle text (MTGJSON AtomicCards).
+const POWER_LEAK_ORACLE: &str = "Enchant enchantment\nAt the beginning of the upkeep of enchanted enchantment's controller, that player may pay any amount of mana. This Aura deals 2 damage to that player. Prevent X of that damage, where X is the amount of mana that player paid this way.";
+const ERRANT_MINION_ORACLE: &str = "Enchant creature\nAt the beginning of the upkeep of enchanted creature's controller, that player may pay any amount of mana. This Aura deals 2 damage to that player. Prevent X of that damage, where X is the amount of mana that player paid this way.";
+const LIEGE_OF_THE_HOLLOWS_ORACLE: &str = "When this creature dies, each player may pay any amount of mana. Then each player creates a number of 1/1 green Squirrel creature tokens equal to the amount of mana they paid this way.";
+
+/// The folded net-damage amount for a "deal 2 damage, prevent X" card:
+/// `max(2 - X, 0)` = `ClampMin { Offset { Multiply(-1, X), 2 }, 0 }`.
+fn max_two_minus_x() -> QuantityExpr {
+    QuantityExpr::ClampMin {
+        inner: Box::new(QuantityExpr::Offset {
+            inner: Box::new(QuantityExpr::Multiply {
+                factor: -1,
+                inner: Box::new(QuantityExpr::Ref {
+                    qty: QuantityRef::Variable {
+                        name: "X".to_string(),
+                    },
+                }),
+            }),
+            offset: 2,
+        }),
+        minimum: 0,
+    }
+}
+
+/// Fix 1: the "amount of mana … paid this way" where-X binding must generalize
+/// across every payer-subject surface variant (Power Leak/Errant Minion "that
+/// player", Liege of the Hollows "they", the bare Join Forces form) — all
+/// binding to `Variable("X")` — while the existing "total amount …" literal
+/// (the 5 must-not-regress Join Forces cards) still matches. Kept mana-scoped
+/// so a non-mana resource phrase does NOT bind to the mana X (CR 106 vs 122).
+#[test]
+fn where_x_amount_of_mana_paid_generalizes_across_payer_subjects() {
+    let x = QuantityExpr::Ref {
+        qty: QuantityRef::Variable {
+            name: "X".to_string(),
+        },
+    };
+    for phrase in [
+        "the amount of mana that player paid this way", // Power Leak / Errant Minion
+        "the amount of mana they paid this way",        // Liege of the Hollows
+        "the amount of mana paid this way",             // bare payer
+        "the total amount of mana paid this way",       // must-not-regress literal
+    ] {
+        assert_eq!(
+            parse_where_x_quantity_expression(phrase).as_ref(),
+            Some(&x),
+            "'{phrase}' must bind X"
+        );
+    }
+    // Mana-scoped: an energy "paid this way" phrase must NOT bind to the mana X
+    // (the tag is deliberately "amount of mana", never resource-generic).
+    assert_ne!(
+        parse_where_x_quantity_expression("the amount of {e} paid this way"),
+        Some(x),
+    );
+}
+
+/// Fix 1 regression: the shared Join Forces binding literal still resolves for
+/// the must-not-regress cards, driven through the real card body parser.
+#[test]
+fn join_forces_total_amount_paid_still_binds_after_generalization() {
+    let is_variable_x = |q: &QuantityExpr| matches!(q, QuantityExpr::Ref { qty: QuantityRef::Variable { name } } if name == "X");
+    // Alliance of Arms — token body.
+    let alliance = parse_effect_chain(
+        "Starting with you, each player may pay any amount of mana. Each player creates X 1/1 white Soldier creature tokens, where X is the total amount of mana paid this way.",
+        AbilityKind::Spell,
+    );
+    let alliance_sub = alliance.sub_ability.as_ref().expect("token sub");
+    match &*alliance_sub.effect {
+        Effect::Token { count, .. } => assert!(
+            is_variable_x(count),
+            "Alliance of Arms token count must stay Variable(X), got {count:?}"
+        ),
+        other => panic!("expected Token, got {other:?}"),
+    }
+    // Minds Aglow — draw body.
+    let minds = parse_effect_chain(
+        "Starting with you, each player may pay any amount of mana. Each player draws X cards, where X is the total amount of mana paid this way.",
+        AbilityKind::Spell,
+    );
+    let minds_sub = minds.sub_ability.as_ref().expect("draw sub");
+    match &*minds_sub.effect {
+        Effect::Draw { count, .. } => assert!(
+            is_variable_x(count),
+            "Minds Aglow draw count must stay Variable(X), got {count:?}"
+        ),
+        other => panic!("expected Draw, got {other:?}"),
+    }
+    // Shared Trauma — mill body.
+    let trauma = parse_effect_chain(
+        "Starting with you, each player may pay any amount of mana. Each player mills X cards, where X is the total amount of mana paid this way.",
+        AbilityKind::Spell,
+    );
+    let trauma_sub = trauma.sub_ability.as_ref().expect("mill sub");
+    match &*trauma_sub.effect {
+        Effect::Mill { count, .. } => assert!(
+            is_variable_x(count),
+            "Shared Trauma mill count must stay Variable(X), got {count:?}"
+        ),
+        other => panic!("expected Mill, got {other:?}"),
+    }
+}
+
+/// Fix 2 + Fix 3 (Power Leak): the upkeep trigger scopes to the enchanted
+/// enchantment's controller (`ParentTargetController`, not every player), and
+/// the "deal 2 damage / prevent X" pair folds into ONE `DealDamage` with the
+/// `max(2 - X, 0)` amount — no `PreventDamage` node survives.
+#[test]
+fn power_leak_folds_deal_prevent_and_scopes_trigger_to_enchanted_controller() {
+    let parsed = parse_oracle_text(
+        POWER_LEAK_ORACLE,
+        "Power Leak",
+        &[],
+        &["Enchantment".to_string()],
+        &["Aura".to_string()],
+    );
+    let trigger = parsed.triggers.first().expect("upkeep trigger");
+    // Fix 3: without the generalized enchant-noun leg this stays `None` (fires
+    // for every player's upkeep).
+    assert_eq!(
+        trigger.valid_target.as_ref(),
+        Some(&TargetFilter::ParentTargetController),
+        "Power Leak upkeep trigger must scope to the enchanted enchantment's controller"
+    );
+
+    let execute = trigger.execute.as_ref().expect("trigger execute");
+    let effects = collect_chain_effects(execute);
+    // Reach guard: the chain parsed to real effects (no Unimplemented), so the
+    // negative "no PreventDamage" assertion below is not vacuous.
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, Effect::Unimplemented { .. })),
+        "Power Leak trigger must parse to supported effects, got {effects:?}"
+    );
+    let deal = effects
+        .iter()
+        .find_map(|e| match e {
+            Effect::DealDamage { amount, .. } => Some(amount.clone()),
+            _ => None,
+        })
+        .expect("a DealDamage node must exist in the folded chain");
+    assert_eq!(
+        deal,
+        max_two_minus_x(),
+        "Fix 2: DealDamage must fold to max(2 - X, 0)"
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, Effect::PreventDamage { .. })),
+        "Fix 2: no PreventDamage node may survive the fold, got {effects:?}"
+    );
+}
+
+/// Fix 2 (Errant Minion): the "Enchant creature" sibling of Power Leak folds
+/// identically, and its trigger already scopes to `ParentTargetController`.
+#[test]
+fn errant_minion_folds_deal_prevent_into_computed_amount() {
+    let parsed = parse_oracle_text(
+        ERRANT_MINION_ORACLE,
+        "Errant Minion",
+        &[],
+        &["Enchantment".to_string()],
+        &["Aura".to_string()],
+    );
+    let trigger = parsed.triggers.first().expect("upkeep trigger");
+    assert_eq!(
+        trigger.valid_target.as_ref(),
+        Some(&TargetFilter::ParentTargetController),
+        "Errant Minion upkeep trigger scopes to the enchanted creature's controller"
+    );
+    let execute = trigger.execute.as_ref().expect("trigger execute");
+    let effects = collect_chain_effects(execute);
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, Effect::Unimplemented { .. })),
+        "Errant Minion trigger must parse to supported effects, got {effects:?}"
+    );
+    let deal = effects
+        .iter()
+        .find_map(|e| match e {
+            Effect::DealDamage { amount, .. } => Some(amount.clone()),
+            _ => None,
+        })
+        .expect("a DealDamage node must exist");
+    assert_eq!(
+        deal,
+        max_two_minus_x(),
+        "DealDamage must fold to max(2 - X, 0)"
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, Effect::PreventDamage { .. })),
+        "no PreventDamage node may survive the fold, got {effects:?}"
+    );
+}
+
+/// Fix 1 (Liege of the Hollows): the "creates a number of … tokens equal to the
+/// amount of mana they paid this way" count binds to `Variable("X")` (so the
+/// upstream PayCost loop's accumulated total flows in), not the dead raw-string
+/// variable that resolved to 0.
+#[test]
+fn liege_of_the_hollows_token_count_binds_variable_x() {
+    let parsed = parse_oracle_text(
+        LIEGE_OF_THE_HOLLOWS_ORACLE,
+        "Liege of the Hollows",
+        &[],
+        &["Creature".to_string()],
+        &["Treefolk".to_string()],
+    );
+    let trigger = parsed.triggers.first().expect("dies trigger");
+    let execute = trigger.execute.as_ref().expect("trigger execute");
+    let effects = collect_chain_effects(execute);
+    let count = effects
+        .iter()
+        .find_map(|e| match e {
+            Effect::Token { count, .. } => Some(count.clone()),
+            _ => None,
+        })
+        .expect("a Token node must exist");
+    assert!(
+        matches!(&count, QuantityExpr::Ref { qty: QuantityRef::Variable { name } } if name == "X"),
+        "Liege token count must bind Variable(X), got {count:?}"
+    );
+}
+
+/// Fix 3: the generalized Enchant-noun leg scopes the upkeep trigger for the
+/// artifact / land / enchantment Aura cousins (previously left unscoped because
+/// the phrase recognizer only matched creature/permanent). Spot-checks one Aura
+/// per new noun class.
+#[test]
+fn enchant_noun_trigger_scope_generalizes_across_aura_types() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "Warp Artifact",
+            "artifact",
+            "Enchant artifact\nAt the beginning of the upkeep of enchanted artifact's controller, this Aura deals 1 damage to that player.",
+        ),
+        (
+            "Cursed Land",
+            "land",
+            "Enchant land\nAt the beginning of the upkeep of enchanted land's controller, this Aura deals 1 damage to that player.",
+        ),
+        (
+            "Feedback",
+            "enchantment",
+            "Enchant enchantment\nAt the beginning of the upkeep of enchanted enchantment's controller, this Aura deals 1 damage to that player.",
+        ),
+    ];
+    for (name, noun, oracle) in cases {
+        let parsed = parse_oracle_text(
+            oracle,
+            name,
+            &[],
+            &["Enchantment".to_string()],
+            &["Aura".to_string()],
+        );
+        let trigger = parsed.triggers.first().expect("upkeep trigger");
+        assert_eq!(
+            trigger.valid_target.as_ref(),
+            Some(&TargetFilter::ParentTargetController),
+            "'{name}' (enchant {noun}) upkeep trigger must scope to the enchanted permanent's controller"
+        );
+    }
+}
+
 // --- compound-subject-each object axis (CR 109.5 / 115.1 / 611.2c) ---
 
 /// Collect every link's recipient filter by walking the parent -> sub_ability
@@ -46003,4 +46415,71 @@ fn attachable_token_creator_still_rewrites_target_side_anaphor() {
     };
     assert_eq!(attachment, TargetFilter::SelfRef);
     assert_eq!(target, TargetFilter::LastCreated);
+}
+
+/// CR 402.1 + CR 121.1 (issue #5637) — production-path regression for Bandit's
+/// Talent. The level-3 trigger "At the beginning of your draw step, draw an
+/// additional card for each opponent who has one or fewer cards in hand" must
+/// lower to a Draw whose count is a `PlayerCount` over opponents with hand size
+/// `<= 1` — not a flat `Fixed(1)`. Before the fix the "for each opponent who has
+/// one or fewer cards in hand" clause was swallowed (a `DynamicQty`
+/// `SwallowedClause` warning fired) and the draw collapsed to one card regardless
+/// of how many opponents were hellbent.
+#[test]
+fn bandits_talent_level3_draw_counts_hellbent_opponents() {
+    use crate::parser::oracle_ir::diagnostic::OracleDiagnostic;
+    use crate::types::ability::{
+        AbilityDefinition, Effect, PlayerFilter, PlayerRelation, PlayerScope, QuantityExpr,
+        QuantityRef,
+    };
+
+    fn find_draw_count(def: &AbilityDefinition) -> Option<QuantityExpr> {
+        if let Effect::Draw { count, .. } = &*def.effect {
+            return Some(count.clone());
+        }
+        def.sub_ability.as_deref().and_then(find_draw_count)
+    }
+
+    let parsed = parse_oracle_text(
+        "When this Class enters, each opponent discards two cards unless they discard a nonland card.\n{B}: Level 2\nAt the beginning of each opponent's upkeep, if that player has one or fewer cards in hand, they lose 2 life.\n{3}{B}: Level 3\nAt the beginning of your draw step, draw an additional card for each opponent who has one or fewer cards in hand.",
+        "Bandit's Talent",
+        &[],
+        &["Enchantment".to_string()],
+        &["Class".to_string()],
+    );
+
+    let count = parsed
+        .triggers
+        .iter()
+        .filter_map(|t| t.execute.as_deref())
+        .find_map(find_draw_count)
+        .expect("Bandit's Talent must lower a draw-step Draw effect");
+
+    assert_eq!(
+        count,
+        QuantityExpr::Ref {
+            qty: QuantityRef::PlayerCount {
+                filter: PlayerFilter::PlayerAttribute {
+                    relation: PlayerRelation::Opponent,
+                    attr: Box::new(QuantityRef::HandSize {
+                        player: PlayerScope::ScopedPlayer,
+                    }),
+                    comparator: crate::types::ability::Comparator::LE,
+                    value: Box::new(QuantityExpr::Fixed { value: 1 }),
+                },
+            },
+        },
+        "the draw count must be the number of opponents with <= 1 card in hand, not Fixed(1)"
+    );
+
+    // The DynamicQty swallow warning for the draw-step line must be gone.
+    assert!(
+        !parsed.parse_warnings.iter().any(|w| matches!(
+            w,
+            OracleDiagnostic::SwallowedClause { detector, description, .. }
+                if detector == "DynamicQty" && description.contains("draw an additional card for each opponent")
+        )),
+        "the DynamicQty swallow warning must be cleared: {:?}",
+        parsed.parse_warnings
+    );
 }
