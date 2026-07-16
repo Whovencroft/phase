@@ -2911,8 +2911,8 @@ pub enum ResolutionCastSuccessAction {
     /// iteration state so `prompt_next_category_member` can advance to the next
     /// nonland card type.
     ForEachCategoryResume {
-        ability: Box<super::game_state::ResolvedAbility>,
-        pool: Vec<super::identifiers::ObjectId>,
+        ability: Box<ResolvedAbility>,
+        pool: Vec<ObjectId>,
         remaining_member_filters: Vec<TargetFilter>,
     },
 }

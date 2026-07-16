@@ -327,7 +327,7 @@ pub(crate) fn drain_pending_per_category_zone_choice(
                         crate::types::ability::ResolutionCastSuccessAction::ForEachCategoryResume {
                             ability: Box::new((*ability).clone()),
                             pool: pool.clone(),
-                            remaining_member_filters,
+                            remaining_member_filters: remaining_member_filters.clone(),
                         },
                 };
                 let request = crate::game::casting::ResolutionCastRequest {
@@ -335,25 +335,28 @@ pub(crate) fn drain_pending_per_category_zone_choice(
                     cast_transformed: false,
                     cleanup,
                     graveyard_replacement: None,
-                    cost: crate::game::casting::ResolutionCastCost::Free,
+                    cost: crate::types::ability::ResolutionCastCost::Free,
                 };
-                if let Some(wf) = crate::game::casting::initiate_cast_during_resolution(
+                match crate::game::casting::initiate_cast_during_resolution(
                     state,
                     ability.controller,
                     card,
                     request,
                     events,
                 ) {
-                    state.waiting_for = wf;
-                } else {
-                    // Cast initiation failed (card no longer valid) — resume iteration.
-                    let _ = prompt_next_category_member(
-                        state,
-                        &ability,
-                        &pool,
-                        remaining_member_filters,
-                        events,
-                    );
+                    Ok(wf) => {
+                        state.waiting_for = wf;
+                    }
+                    Err(_) => {
+                        // Cast initiation failed (card no longer valid) — resume iteration.
+                        let _ = prompt_next_category_member(
+                            state,
+                            &ability,
+                            &pool,
+                            remaining_member_filters,
+                            events,
+                        );
+                    }
                 }
                 return;
             }
