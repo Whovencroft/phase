@@ -3178,7 +3178,7 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
             ));
             match action {
                 ForEachCategoryAction::ExileFromPool { zone, .. }
-                | ForEachCategoryAction::CastFreeFromPool { zone } => {
+                | ForEachCategoryAction::GrantPerTypeCastPermission { zone } => {
                     d.push(("zone".into(), fmt_zone(zone)));
                 }
                 ForEachCategoryAction::PutCounter {

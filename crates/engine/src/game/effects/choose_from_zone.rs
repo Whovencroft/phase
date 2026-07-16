@@ -9,7 +9,8 @@ use crate::types::ability::{
 use crate::types::card_type::CoreType;
 use crate::types::events::GameEvent;
 use crate::types::game_state::{GameState, ResolvingTriggerContext, WaitingFor};
-use crate::types::identifiers::ObjectId;
+use crate::types::identifiers::{ObjectId, TrackedSetId};
+use crate::types::mana::ManaCost;
 use crate::types::player::PlayerId;
 use crate::types::zones::Zone;
 
@@ -140,7 +141,9 @@ pub fn resolve_for_each_category(
     };
     let pool = match action {
         ForEachCategoryAction::ExileFromPool { .. }
-        | ForEachCategoryAction::CastFreeFromPool { .. } => resolve_category_pool(state, ability),
+        | ForEachCategoryAction::GrantPerTypeCastPermission { .. } => {
+            resolve_category_pool(state, ability)
+        }
         ForEachCategoryAction::PutCounter { target, .. } => {
             resolve_put_counter_pool(state, ability, target)
         }
@@ -155,8 +158,18 @@ pub fn resolve_for_each_category(
             })
             .collect(),
         ForEachCategoryAction::ExileFromPool { .. }
-        | ForEachCategoryAction::CastFreeFromPool { .. } => category.member_filters(),
+        | ForEachCategoryAction::GrantPerTypeCastPermission { .. } => category.member_filters(),
     };
+    // GrantPerTypeCastPermission: grant lingering permissions directly, no iteration loop.
+    if matches!(
+        action,
+        ForEachCategoryAction::GrantPerTypeCastPermission { .. }
+    ) {
+        let ForEachCategoryAction::GrantPerTypeCastPermission { zone } = action else {
+            unreachable!()
+        };
+        return grant_per_type_cast_permissions(state, ability, &pool, *zone, category, events);
+    }
     prompt_next_category_member(state, ability, &pool, member_filters, events)
 }
 
@@ -189,11 +202,7 @@ fn prompt_next_category_member(
             action: ForEachCategoryAction::ExileFromPool { zone, up_to },
             ..
         } => (*zone, *chooser, *up_to, None),
-        Effect::ForEachCategory {
-            chooser,
-            action: ForEachCategoryAction::CastFreeFromPool { zone },
-            ..
-        } => (*zone, *chooser, true, None),
+
         Effect::ForEachCategory {
             chooser,
             action:
@@ -312,52 +321,7 @@ pub(crate) fn drain_pending_per_category_zone_choice(
                 super::publish_tracked_set(state, chosen.to_vec());
             }
         }
-        Effect::ForEachCategory {
-            action: ForEachCategoryAction::CastFreeFromPool { .. },
-            ..
-        } if !chosen.is_empty() => {
-            // CR 608.2g: Initiate a free cast-during-resolution on the chosen card.
-            let card = chosen[0];
-            let cleanup = crate::types::ability::ResolutionCastCleanup {
-                exiled_misses: Vec::new(),
-                reject_action: crate::types::ability::ResolutionMvRejectAction::RemainExiled,
-                success_action:
-                    crate::types::ability::ResolutionCastSuccessAction::ForEachCategoryResume {
-                        ability: Box::new((*ability).clone()),
-                        pool: pool.clone(),
-                        remaining_member_filters: remaining_member_filters.clone(),
-                    },
-            };
-            let request = crate::game::casting::ResolutionCastRequest {
-                constraint: None,
-                cast_transformed: false,
-                cleanup,
-                graveyard_replacement: None,
-                cost: crate::types::ability::ResolutionCastCost::Free,
-            };
-            match crate::game::casting::initiate_cast_during_resolution(
-                state,
-                ability.controller,
-                card,
-                request,
-                events,
-            ) {
-                Ok(wf) => {
-                    state.waiting_for = wf;
-                }
-                Err(_) => {
-                    // Cast initiation failed (card no longer valid) — resume iteration.
-                    let _ = prompt_next_category_member(
-                        state,
-                        &ability,
-                        &pool,
-                        remaining_member_filters,
-                        events,
-                    );
-                }
-            }
-            return;
-        }
+
         Effect::ForEachCategory {
             action:
                 ForEachCategoryAction::PutCounter {
@@ -390,22 +354,65 @@ pub(crate) fn drain_pending_per_category_zone_choice(
     let _ = prompt_next_category_member(state, &ability, &pool, remaining_member_filters, events);
 }
 
-/// CR 608.2g: Resume the `ForEachCategory` iteration after a successful
-/// cast-during-resolution. Called from `handle_resolution_cast_success` when
-/// `ForEachCategoryResume` fires. Returns the next `WaitingFor` if more
-/// members remain, or `None` when the iteration is complete.
-pub(crate) fn resume_for_each_category_cast(
+/// CR 611.2a + CR 118.9 + CR 205.2a: Grant duration-bound, per-card-type cast
+/// permissions on eligible cards in the tracked pool. For each nonland card type
+/// with at least one eligible card, allocates a unique `TrackedSetId` and stamps
+/// `ExileWithAltCost { cost: zero, duration, single_use_group: Some(group) }` on
+/// every card of that type. The per-type single-use group ensures at most one
+/// spell of each type may be cast (consumption handled by
+/// `casting::consume_single_use_exile_alt_cost`).
+fn grant_per_type_cast_permissions(
     state: &mut GameState,
     ability: &ResolvedAbility,
     pool: &[ObjectId],
-    remaining_member_filters: Vec<TargetFilter>,
+    zone: Zone,
+    category: crate::types::ability::IterationCategory,
     events: &mut Vec<GameEvent>,
-) -> Option<Box<WaitingFor>> {
-    let _ = prompt_next_category_member(state, ability, pool, remaining_member_filters, events);
-    match &state.waiting_for {
-        WaitingFor::ChooseFromZoneChoice { .. } => Some(Box::new(state.waiting_for.clone())),
-        _ => None,
+) -> Result<(), EffectError> {
+    use crate::types::ability::CastingPermission;
+    let member_filters = category.member_filters();
+    let filter_ctx = FilterContext::from_ability(ability);
+    let duration = ability.duration.clone();
+    for member_filter in &member_filters {
+        // Find eligible cards of this type in the pool.
+        let cards: Vec<ObjectId> = pool
+            .iter()
+            .copied()
+            .filter(|id| state.objects.get(id).is_some_and(|obj| obj.zone == zone))
+            .filter(|id| matches_target_filter(state, *id, member_filter, &filter_ctx))
+            .collect();
+        if cards.is_empty() {
+            continue;
+        }
+        // Allocate a unique single_use_group for this card type.
+        let group = TrackedSetId(state.next_tracked_set_id);
+        state.next_tracked_set_id += 1;
+        // Stamp ExileWithAltCost { cost: zero, duration, single_use_group } on each card.
+        for &card_id in &cards {
+            if let Some(obj) = state.objects.get_mut(&card_id) {
+                obj.casting_permissions
+                    .push(CastingPermission::ExileWithAltCost {
+                        cost: ManaCost::zero(),
+                        cast_transformed: false,
+                        constraint: None,
+                        granted_to: Some(ability.controller),
+                        resolution_cleanup: None,
+                        duration: duration.clone(),
+                        graveyard_replacement: None,
+                        enters_with_counter: None,
+                        enters_with_modifications: Vec::new(),
+                        mana_spend_permission: None,
+                        single_use_group: Some(group),
+                    });
+            }
+        }
     }
+    events.push(GameEvent::EffectResolved {
+        kind: EffectKind::ChooseFromZone,
+        source_id: ability.source_id,
+        subject: None,
+    });
+    Ok(())
 }
 
 fn publish_tracked_set_unique(state: &mut GameState, ids: &[ObjectId]) {

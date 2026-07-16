@@ -46486,7 +46486,7 @@ fn bandits_talent_level3_draw_counts_hellbent_opponents() {
 
 /// CR 608.2g: "For each nonland card type, you may cast a spell of that type
 /// from among the exiled cards without paying its mana cost" lowers to
-/// `Effect::ForEachCategory` with `NonlandCardType` + `CastFreeFromPool`.
+/// `Effect::ForEachCategory` with `NonlandCardType` + `GrantPerTypeCastPermission`.
 #[test]
 fn for_each_nonland_card_type_cast_free_from_exile() {
     use crate::types::ability::IterationCategory;
@@ -46507,10 +46507,10 @@ fn for_each_nonland_card_type_cast_free_from_exile() {
         "category must be NonlandCardType"
     );
     match action {
-        ForEachCategoryAction::CastFreeFromPool { zone } => {
+        ForEachCategoryAction::GrantPerTypeCastPermission { zone } => {
             assert_eq!(*zone, Zone::Exile, "zone must be Exile");
         }
-        other => panic!("expected CastFreeFromPool, got {other:?}"),
+        other => panic!("expected GrantPerTypeCastPermission, got {other:?}"),
     }
 }
 
@@ -46541,7 +46541,7 @@ fn aminatous_augury_full_dispatch() {
             &*def.effect,
             Effect::ForEachCategory {
                 category: crate::types::ability::IterationCategory::NonlandCardType,
-                action: ForEachCategoryAction::CastFreeFromPool { .. },
+                action: ForEachCategoryAction::GrantPerTypeCastPermission { .. },
                 ..
             }
         ) {
@@ -46556,6 +46556,6 @@ fn aminatous_augury_full_dispatch() {
     }
     assert!(
         has_for_each_category(ability),
-        "spell ability chain must contain ForEachCategory/CastFreeFromPool, got {ability:#?}",
+        "spell ability chain must contain ForEachCategory/GrantPerTypeCastPermission, got {ability:#?}",
     );
 }

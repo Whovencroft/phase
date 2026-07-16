@@ -7421,6 +7421,16 @@ fn finalize_cast_with_phyrexian_choices_inner(
     } else {
         None
     };
+    // CR 611.2a: Capture the ExileWithAltCost single_use_group before the
+    // Exile→Stack move strips it (CR 400.7).
+    let single_use_exile_alt_cost_group = if source_zone == Zone::Exile {
+        state
+            .objects
+            .get(&object_id)
+            .and_then(|obj| super::casting::single_use_exile_alt_cost_group(state, obj, player))
+    } else {
+        None
+    };
 
     // CR 614.1a + CR 608.2n + CR 400.7 / CR 113.6e: Capture the `CastFromZone`
     // grant's graveyard-redirect destination BEFORE the Exile→Stack move. For an
@@ -7715,6 +7725,9 @@ fn finalize_cast_with_phyrexian_choices_inner(
     if let Some(group) = single_use_exile_play_group {
         super::casting::consume_single_use_play_from_exile(state, group);
     }
+    if let Some(group) = single_use_exile_alt_cost_group {
+        super::casting::consume_single_use_exile_alt_cost(state, group);
+    }
 
     // CR 611.2f: Snapshot the spell's effective keywords NOW, while the spell is
     // not yet in `spells_cast_this_turn_by_player`, so that
@@ -7896,6 +7909,7 @@ fn evaluate_cascade_constraint_with_resulting_mv(
                         enters_with_counter: None,
                         enters_with_modifications: Vec::new(),
                         mana_spend_permission: Some(msp),
+                        single_use_group: None,
                     });
             }
         }
@@ -7961,19 +7975,6 @@ fn handle_resolution_cast_success(
         // instead rider (CR 614.1a) to the cast spell, then reduce the running
         // MV budget by this spell's resulting mana value, decrement the cast
         // count, and re-open the window if any casts remain and candidates fit.
-        // CR 608.2g: Resume the per-category iteration after a successful
-        // cast-during-resolution (Aminatou's Augury).
-        ResolutionCastSuccessAction::ForEachCategoryResume {
-            ability,
-            pool,
-            remaining_member_filters,
-        } => crate::game::effects::choose_from_zone::resume_for_each_category_cast(
-            state,
-            &ability,
-            &pool,
-            remaining_member_filters,
-            events,
-        ),
         ResolutionCastSuccessAction::FreeCastOfferRemaining {
             controller,
             remaining_casts,
@@ -15312,6 +15313,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
 
             (state, hit, vec![miss_a, miss_b])
@@ -15416,6 +15418,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
 
             let outcome = evaluate_cascade_constraint_with_resulting_mv(
@@ -15484,6 +15487,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
 
             let outcome = evaluate_cascade_constraint_with_resulting_mv(
@@ -15530,6 +15534,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
             push_announcement_stack_entry(&mut state, hit);
 
@@ -15587,6 +15592,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
             hit_obj
                 .casting_permissions
@@ -15602,6 +15608,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
             push_announcement_stack_entry(&mut state, hit);
 
@@ -15651,6 +15658,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
             state.players[0].mana_pool.add(ManaUnit {
                 color: ManaType::Colorless,
@@ -15720,6 +15728,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
             hit_obj
                 .casting_permissions
@@ -15742,6 +15751,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
             push_announcement_stack_entry(&mut state, hit);
 
@@ -15799,6 +15809,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
             hit_obj
                 .casting_permissions
@@ -15814,6 +15825,7 @@ mod tests {
                     enters_with_counter: None,
                     enters_with_modifications: Vec::new(),
                     mana_spend_permission: None,
+                    single_use_group: None,
                 });
             push_announcement_stack_entry(&mut state, hit);
 

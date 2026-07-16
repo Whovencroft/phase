@@ -2161,9 +2161,19 @@ pub(super) fn exile_alt_cost_permission_supports_cast(
         crate::types::ability::CastingPermission::ExileWithAltCost {
             granted_to,
             constraint,
+            single_use_group,
             ..
+        } => {
+            // CR 611.2a: Reject if the per-type single-use group is consumed.
+            if let Some(group) = single_use_group {
+                if state.exile_play_single_use_consumed.contains(group) {
+                    return false;
+                }
+            }
+            exile_alt_cost_permission_grants_to_player(player, *granted_to)
+                && cast_permission_constraint_allows_cast(state, obj, constraint, resulting_mv)
         }
-        | crate::types::ability::CastingPermission::ExileWithAltAbilityCost {
+        crate::types::ability::CastingPermission::ExileWithAltAbilityCost {
             granted_to,
             constraint,
             ..
@@ -2600,6 +2610,56 @@ pub(crate) fn consume_single_use_play_from_exile(state: &mut GameState, group: T
                     crate::types::ability::CastingPermission::PlayFromExile {
                         single_use_group,
                         single_use: true,
+                        ..
+                    } if *single_use_group == Some(group)
+                )
+            });
+        }
+    }
+}
+
+/// CR 611.2a + CR 118.9: Extract the `single_use_group` from an
+/// `ExileWithAltCost` permission on the object being cast, if present.
+/// Called during cast finalization to capture the group before the card
+/// leaves exile (which strips all permissions).
+pub(super) fn single_use_exile_alt_cost_group(
+    state: &GameState,
+    obj: &crate::game::game_object::GameObject,
+    _player: PlayerId,
+) -> Option<TrackedSetId> {
+    obj.casting_permissions.iter().find_map(|p| {
+        if let crate::types::ability::CastingPermission::ExileWithAltCost {
+            single_use_group: Some(group),
+            ..
+        } = p
+        {
+            if state.exile_play_single_use_consumed.contains(group) {
+                return None;
+            }
+            Some(*group)
+        } else {
+            None
+        }
+    })
+}
+
+/// CR 611.2a + CR 118.9: Consume a per-type single-use `ExileWithAltCost` group.
+/// Marks the group as consumed and strips all sibling `ExileWithAltCost`
+/// permissions carrying the same group from every object in exile, preventing
+/// further casts of the same card type from the Aminatou's Augury pool.
+pub(super) fn consume_single_use_exile_alt_cost(
+    state: &mut crate::types::game_state::GameState,
+    group: crate::types::identifiers::TrackedSetId,
+) {
+    state.exile_play_single_use_consumed.insert(group);
+    // Strip sibling permissions with the same group from all exiled objects.
+    for obj_id in state.exile.clone() {
+        if let Some(obj) = state.objects.get_mut(&obj_id) {
+            obj.casting_permissions.retain(|p| {
+                !matches!(
+                    p,
+                    crate::types::ability::CastingPermission::ExileWithAltCost {
+                        single_use_group,
                         ..
                     } if *single_use_group == Some(group)
                 )
@@ -9294,6 +9354,7 @@ pub(super) fn initiate_cast_during_resolution(
                 enters_with_counter: None,
                 enters_with_modifications: Vec::new(),
                 mana_spend_permission,
+                single_use_group: None,
             });
         // CR 614.1a + CR 608.2n: apply the graveyard-redirect rider HERE — this is
         // the sole application point for during-resolution casts. The pushed

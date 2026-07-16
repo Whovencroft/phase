@@ -4043,6 +4043,7 @@ fn try_parse_airbend_clause(tp: TextPair<'_>) -> Option<ParsedEffectClause> {
                         enters_with_counter: None,
                         enters_with_modifications: Vec::new(),
                         mana_spend_permission: None,
+                        single_use_group: None,
                     },
                     target: TargetFilter::TrackedSet {
                         id: TrackedSetId(0),
@@ -5898,7 +5899,7 @@ mod for_each_category_put_counter_tests {
 /// clause — "for each nonland card type, you may cast a spell of that type
 /// from among the exiled cards without paying its mana cost" (Aminatou's
 /// Augury). Emits [`Effect::ForEachCategory`] with
-/// [`ForEachCategoryAction::CastFreeFromPool`].
+/// [`ForEachCategoryAction::GrantPerTypeCastPermission`].
 fn try_parse_for_each_category_cast_free(tp: TextPair<'_>) -> Option<ParsedEffectClause> {
     type E<'a> = OracleError<'a>;
     use crate::types::ability::IterationCategory;
@@ -5931,7 +5932,7 @@ fn try_parse_for_each_category_cast_free(tp: TextPair<'_>) -> Option<ParsedEffec
         effect: Effect::ForEachCategory {
             category,
             chooser: crate::types::ability::Chooser::Controller,
-            action: crate::types::ability::ForEachCategoryAction::CastFreeFromPool {
+            action: crate::types::ability::ForEachCategoryAction::GrantPerTypeCastPermission {
                 zone: Zone::Exile,
             },
         },
@@ -11072,7 +11073,6 @@ fn try_parse_per_grantee_play_grant(tp: TextPair<'_>) -> Option<ParsedEffectClau
             exiled_by_ability_controller: None,
             mana_spend_permission: None,
             card_filter: None,
-            single_use_group: None,
             single_use: false,
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
@@ -11192,7 +11192,6 @@ fn try_parse_cast_from_tracked_exile_grant(tp: TextPair<'_>) -> Option<ParsedEff
             exiled_by_ability_controller: None,
             mana_spend_permission,
             card_filter,
-            single_use_group: None,
             single_use,
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
@@ -11284,7 +11283,6 @@ fn try_parse_exile_play_grant_with_any_mana(tp: TextPair<'_>) -> Option<ParsedEf
             exiled_by_ability_controller: None,
             mana_spend_permission: Some(ManaSpendPermission::AnyTypeOrColor),
             card_filter: None,
-            single_use_group: None,
             single_use: false,
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
@@ -11490,7 +11488,6 @@ fn try_parse_play_from_exile(tp: TextPair, ctx: &ParseContext) -> Option<ParsedE
             exiled_by_ability_controller: None,
             mana_spend_permission: None,
             card_filter: None,
-            single_use_group: None,
             single_use: false,
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
@@ -11553,7 +11550,6 @@ fn try_parse_play_the_exiled_card_grant(tp: TextPair) -> Option<ParsedEffectClau
             exiled_by_ability_controller: None,
             mana_spend_permission,
             card_filter: None,
-            single_use_group: None,
             single_use: false,
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,

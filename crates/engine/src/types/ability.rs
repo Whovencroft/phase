@@ -237,7 +237,7 @@ pub enum ForEachCategoryAction {
     /// without paying its mana cost" (Aminatou's Augury). The user picks which
     /// card to cast via `ChooseFromZoneChoice`; the cast is initiated during
     /// resolution with `ResolutionCastCost::Free`.
-    CastFreeFromPool {
+    GrantPerTypeCastPermission {
         /// The zone the pool cards currently reside in (Exile for Aminatou's Augury).
         zone: Zone,
     },
@@ -2609,6 +2609,15 @@ pub enum CastingPermission {
         /// payment unchanged for every other exile/graveyard alt-cost grant.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mana_spend_permission: Option<ManaSpendPermission>,
+        /// CR 611.2a + CR 118.9: Per-type single-use group identity for
+        /// "for each [type], you may cast a spell of that type" grants
+        /// (Aminatou's Augury). When `Some(group)`, at most one cast from
+        /// this group is permitted; on cast finalization the group is marked
+        /// consumed in `exile_play_single_use_consumed` and all sibling
+        /// permissions with the same group are stripped. Mirrors
+        /// `PlayFromExile.single_use_group`. `None` for all other grants.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        single_use_group: Option<TrackedSetId>,
     },
     /// CR 400.7i: Play from exile until duration expires (impulse draw).
     /// Building block for "exile top N, choose one, you may play it this turn" patterns.
@@ -2905,15 +2914,6 @@ pub enum ResolutionCastSuccessAction {
         zones: Vec<Zone>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         exile_instead_of_graveyard: bool,
-    },
-    /// CR 608.2g + CR 205.2a: Resume a `ForEachCategory` / `CastFreeFromPool`
-    /// iteration after the current member's free cast resolves. Carries the
-    /// iteration state so `prompt_next_category_member` can advance to the next
-    /// nonland card type.
-    ForEachCategoryResume {
-        ability: Box<ResolvedAbility>,
-        pool: Vec<ObjectId>,
-        remaining_member_filters: Vec<TargetFilter>,
     },
 }
 
@@ -22624,6 +22624,7 @@ mod tests {
             enters_with_counter: None,
             enters_with_modifications: Vec::new(),
             mana_spend_permission: None,
+            single_use_group: None,
         };
         let mut v: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&modern).unwrap()).unwrap();
