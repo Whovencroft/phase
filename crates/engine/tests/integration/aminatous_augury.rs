@@ -6,7 +6,6 @@
 //! Enchantment, Instant, Kindred, Planeswalker, Sorcery, Battle) and for each
 //! type with eligible cards in the pool, offers a free cast-during-resolution.
 
-use engine::game::ability_utils::build_resolved_from_def;
 use engine::game::effects::resolve_ability_chain;
 use engine::game::scenario::{GameScenario, P0, P1};
 use engine::parser::oracle_effect::parse_effect_chain;
@@ -15,7 +14,7 @@ use engine::types::ability::{
 };
 use engine::types::card_type::CoreType;
 use engine::types::game_state::WaitingFor;
-use engine::types::identifiers::{ObjectId, TrackedSetId};
+use engine::types::identifiers::TrackedSetId;
 use engine::types::phase::Phase;
 use engine::types::zones::Zone;
 

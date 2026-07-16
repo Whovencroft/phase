@@ -315,51 +315,48 @@ pub(crate) fn drain_pending_per_category_zone_choice(
         Effect::ForEachCategory {
             action: ForEachCategoryAction::CastFreeFromPool { .. },
             ..
-        } => {
+        } if !chosen.is_empty() => {
             // CR 608.2g: Initiate a free cast-during-resolution on the chosen card.
-            // If the user picked nothing (up_to=true decline), skip to next member.
-            if !chosen.is_empty() {
-                let card = chosen[0];
-                let cleanup = crate::types::ability::ResolutionCastCleanup {
-                    exiled_misses: Vec::new(),
-                    reject_action: crate::types::ability::ResolutionMvRejectAction::RemainExiled,
-                    success_action:
-                        crate::types::ability::ResolutionCastSuccessAction::ForEachCategoryResume {
-                            ability: Box::new((*ability).clone()),
-                            pool: pool.clone(),
-                            remaining_member_filters: remaining_member_filters.clone(),
-                        },
-                };
-                let request = crate::game::casting::ResolutionCastRequest {
-                    constraint: None,
-                    cast_transformed: false,
-                    cleanup,
-                    graveyard_replacement: None,
-                    cost: crate::types::ability::ResolutionCastCost::Free,
-                };
-                match crate::game::casting::initiate_cast_during_resolution(
-                    state,
-                    ability.controller,
-                    card,
-                    request,
-                    events,
-                ) {
-                    Ok(wf) => {
-                        state.waiting_for = wf;
-                    }
-                    Err(_) => {
-                        // Cast initiation failed (card no longer valid) — resume iteration.
-                        let _ = prompt_next_category_member(
-                            state,
-                            &ability,
-                            &pool,
-                            remaining_member_filters,
-                            events,
-                        );
-                    }
+            let card = chosen[0];
+            let cleanup = crate::types::ability::ResolutionCastCleanup {
+                exiled_misses: Vec::new(),
+                reject_action: crate::types::ability::ResolutionMvRejectAction::RemainExiled,
+                success_action:
+                    crate::types::ability::ResolutionCastSuccessAction::ForEachCategoryResume {
+                        ability: Box::new((*ability).clone()),
+                        pool: pool.clone(),
+                        remaining_member_filters: remaining_member_filters.clone(),
+                    },
+            };
+            let request = crate::game::casting::ResolutionCastRequest {
+                constraint: None,
+                cast_transformed: false,
+                cleanup,
+                graveyard_replacement: None,
+                cost: crate::types::ability::ResolutionCastCost::Free,
+            };
+            match crate::game::casting::initiate_cast_during_resolution(
+                state,
+                ability.controller,
+                card,
+                request,
+                events,
+            ) {
+                Ok(wf) => {
+                    state.waiting_for = wf;
                 }
-                return;
+                Err(_) => {
+                    // Cast initiation failed (card no longer valid) — resume iteration.
+                    let _ = prompt_next_category_member(
+                        state,
+                        &ability,
+                        &pool,
+                        remaining_member_filters,
+                        events,
+                    );
+                }
             }
+            return;
         }
         Effect::ForEachCategory {
             action:

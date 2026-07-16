@@ -46522,24 +46522,47 @@ fn aminatous_augury_full_dispatch() {
         "For each nonland card type, you may cast a spell of that type ",
         "from among the exiled cards without paying its mana cost.",
     );
-    let parsed = parse_oracle_text(oracle);
-    // The second effect (index 1) should be ForEachCategory.
-    assert!(
-        parsed.effects.len() >= 2,
-        "expected at least 2 effects, got {}",
-        parsed.effects.len()
+    let parsed = parse_oracle_text(
+        oracle,
+        "Aminatou's Augury",
+        &[],
+        &["Sorcery".to_string()],
+        &[],
     );
-    let clause = &parsed.effects[1];
+    // The spell ability chain should contain a ForEachCategory effect.
     assert!(
-        matches!(
-            clause.effect,
-            Effect::ForEachCategory {
-                category: crate::types::ability::IterationCategory::NonlandCardType,
-                action: ForEachCategoryAction::CastFreeFromPool { .. },
-                ..
+        !parsed.abilities.is_empty(),
+        "expected at least one ability from Aminatou's Augury"
+    );
+    let ability = &parsed.abilities[0];
+    // Walk the chain to find the ForEachCategory node.
+    fn has_for_each_category(def: &crate::types::ability::AbilityDefinition) -> bool {
+        fn walk(chain: &crate::types::ability::ResolvedAbility) -> bool {
+            if matches!(
+                &chain.effect,
+                Effect::ForEachCategory {
+                    category: crate::types::ability::IterationCategory::NonlandCardType,
+                    action: ForEachCategoryAction::CastFreeFromPool { .. },
+                    ..
+                }
+            ) {
+                return true;
             }
-        ),
-        "second effect must be ForEachCategory/CastFreeFromPool, got {:?}",
-        clause.effect
+            if let Some(ref sub) = chain.sub_ability {
+                if walk(sub) {
+                    return true;
+                }
+            }
+            false
+        }
+        match &def.ability {
+            crate::types::ability::Ability::Spell(chain)
+            | crate::types::ability::Ability::Activated { chain, .. } => walk(chain),
+            _ => false,
+        }
+    }
+    assert!(
+        has_for_each_category(ability),
+        "spell ability chain must contain ForEachCategory/CastFreeFromPool, got {ability:#?}",
     );
 }
