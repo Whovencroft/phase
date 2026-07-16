@@ -276,6 +276,7 @@ fn synthesize_prepared_copy_object(
             enters_with_counter: None,
             enters_with_modifications: Vec::new(),
             mana_spend_permission: None,
+            single_use_group: None,
         });
     state.objects.insert(copy_id, copy_obj);
 

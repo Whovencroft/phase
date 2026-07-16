@@ -2390,6 +2390,7 @@ pub(super) fn lower_targeted_action_ast(ast: TargetedImperativeAst) -> Effect {
                 enters_with_counter: None,
                 enters_with_modifications: Vec::new(),
                 mana_spend_permission: None,
+                single_use_group: None,
             },
             target,
             grantee: crate::types::ability::PermissionGrantee::ObjectOwner,
