@@ -5759,7 +5759,9 @@ fn try_parse_for_each_category_exile(tp: TextPair<'_>) -> Option<ParsedEffectCla
     // The "that <member-noun>" must agree with the iterated category.
     let (rest, _) = match category {
         IterationCategory::Color => tag::<_, _, E>("color").parse(rest).ok()?,
-        IterationCategory::CardType => tag::<_, _, E>("type").parse(rest).ok()?,
+        IterationCategory::CardType | IterationCategory::NonlandCardType => {
+            tag::<_, _, E>("type").parse(rest).ok()?
+        }
     };
     let (rest, _) = tag::<_, _, E>(" from among ").parse(rest).ok()?;
     // CR 608.2c: the pool reference — "them" (anaphor for the revealed cards) or
@@ -5836,7 +5838,7 @@ fn try_parse_for_each_category_put_counter(tp: TextPair<'_>) -> Option<ParsedEff
     }
     let member_suffix = match category {
         IterationCategory::Color => "of that color",
-        IterationCategory::CardType => "of that type",
+        IterationCategory::CardType | IterationCategory::NonlandCardType => "of that type",
     };
     let rest = rest.trim();
     if !rest.starts_with(member_suffix) {
@@ -5890,6 +5892,57 @@ mod for_each_category_put_counter_tests {
             }
         ));
     }
+}
+
+/// CR 608.2g + CR 118.9 + CR 205.2a: Parse the for-each-category free-cast
+/// clause — "for each nonland card type, you may cast a spell of that type
+/// from among the exiled cards without paying its mana cost" (Aminatou's
+/// Augury). Emits [`Effect::ForEachCategory`] with
+/// [`ForEachCategoryAction::CastFreeFromPool`].
+fn try_parse_for_each_category_cast_free(tp: TextPair<'_>) -> Option<ParsedEffectClause> {
+    type E<'a> = OracleError<'a>;
+    use crate::types::ability::IterationCategory;
+
+    let (rest, _) = tag::<_, _, E>("for each ").parse(tp.lower).ok()?;
+    let (rest, category) = alt((
+        value(
+            IterationCategory::NonlandCardType,
+            tag::<_, _, E>("nonland card type"),
+        ),
+        value(
+            IterationCategory::CardType,
+            (tag::<_, _, E>("card type"), opt(tag::<_, _, E>("s"))),
+        ),
+    ))
+    .parse(rest)
+    .ok()?;
+    let (rest, _) = tag::<_, _, E>(", you may cast ").parse(rest).ok()?;
+    let (rest, _) = nom_primitives::parse_article.parse(rest).ok()?;
+    let (rest, _) = tag::<_, _, E>(
+        "spell of that type from among the exiled cards without paying its mana cost",
+    )
+    .parse(rest)
+    .ok()?;
+    if !rest.trim().is_empty() {
+        return None;
+    }
+
+    Some(ParsedEffectClause {
+        effect: Effect::ForEachCategory {
+            category,
+            chooser: crate::types::ability::Chooser::Controller,
+            action: crate::types::ability::ForEachCategoryAction::CastFreeFromPool {
+                zone: Zone::Exile,
+            },
+        },
+        duration: None,
+        sub_ability: None,
+        distribute: None,
+        multi_target: None,
+        condition: None,
+        optional: false,
+        unless_pay: None,
+    })
 }
 
 fn unless_rider_defers_to_body_parser(text: &str) -> bool {
@@ -7454,6 +7507,10 @@ fn parse_effect_clause_inner(text: &str, ctx: &mut ParseContext) -> ParsedEffect
     }
 
     if let Some(clause) = try_parse_for_each_category_put_counter(tp) {
+        return clause;
+    }
+
+    if let Some(clause) = try_parse_for_each_category_cast_free(tp) {
         return clause;
     }
 

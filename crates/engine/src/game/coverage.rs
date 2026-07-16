@@ -3171,10 +3171,14 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
                 match category {
                     crate::types::ability::IterationCategory::Color => "color".to_string(),
                     crate::types::ability::IterationCategory::CardType => "card type".to_string(),
+                    crate::types::ability::IterationCategory::NonlandCardType => {
+                        "nonland card type".to_string()
+                    }
                 },
             ));
             match action {
-                ForEachCategoryAction::ExileFromPool { zone, .. } => {
+                ForEachCategoryAction::ExileFromPool { zone, .. }
+                | ForEachCategoryAction::CastFreeFromPool { zone } => {
                     d.push(("zone".into(), fmt_zone(zone)));
                 }
                 ForEachCategoryAction::PutCounter {

@@ -139,7 +139,8 @@ pub fn resolve_for_each_category(
         _ => return Err(EffectError::MissingParam("ForEachCategory".to_string())),
     };
     let pool = match action {
-        ForEachCategoryAction::ExileFromPool { .. } => resolve_category_pool(state, ability),
+        ForEachCategoryAction::ExileFromPool { .. }
+        | ForEachCategoryAction::CastFreeFromPool { .. } => resolve_category_pool(state, ability),
         ForEachCategoryAction::PutCounter { target, .. } => {
             resolve_put_counter_pool(state, ability, target)
         }
@@ -153,7 +154,8 @@ pub fn resolve_for_each_category(
                 filters: vec![target.clone(), member],
             })
             .collect(),
-        ForEachCategoryAction::ExileFromPool { .. } => category.member_filters(),
+        ForEachCategoryAction::ExileFromPool { .. }
+        | ForEachCategoryAction::CastFreeFromPool { .. } => category.member_filters(),
     };
     prompt_next_category_member(state, ability, &pool, member_filters, events)
 }
@@ -187,6 +189,11 @@ fn prompt_next_category_member(
             action: ForEachCategoryAction::ExileFromPool { zone, up_to },
             ..
         } => (*zone, *chooser, *up_to, None),
+        Effect::ForEachCategory {
+            chooser,
+            action: ForEachCategoryAction::CastFreeFromPool { zone },
+            ..
+        } => (*zone, *chooser, true, None),
         Effect::ForEachCategory {
             chooser,
             action:
@@ -306,6 +313,52 @@ pub(crate) fn drain_pending_per_category_zone_choice(
             }
         }
         Effect::ForEachCategory {
+            action: ForEachCategoryAction::CastFreeFromPool { .. },
+            ..
+        } => {
+            // CR 608.2g: Initiate a free cast-during-resolution on the chosen card.
+            // If the user picked nothing (up_to=true decline), skip to next member.
+            if !chosen.is_empty() {
+                let card = chosen[0];
+                let cleanup = crate::types::ability::ResolutionCastCleanup {
+                    exiled_misses: Vec::new(),
+                    reject_action: crate::types::ability::ResolutionMvRejectAction::RemainExiled,
+                    success_action:
+                        crate::types::ability::ResolutionCastSuccessAction::ForEachCategoryResume {
+                            ability: Box::new((*ability).clone()),
+                            pool: pool.clone(),
+                            remaining_member_filters,
+                        },
+                };
+                let request = crate::game::casting::ResolutionCastRequest {
+                    constraint: None,
+                    cast_transformed: false,
+                    cleanup,
+                    graveyard_replacement: None,
+                    cost: crate::game::casting::ResolutionCastCost::Free,
+                };
+                if let Some(wf) = crate::game::casting::initiate_cast_during_resolution(
+                    state,
+                    ability.controller,
+                    card,
+                    request,
+                    events,
+                ) {
+                    state.waiting_for = wf;
+                } else {
+                    // Cast initiation failed (card no longer valid) — resume iteration.
+                    let _ = prompt_next_category_member(
+                        state,
+                        &ability,
+                        &pool,
+                        remaining_member_filters,
+                        events,
+                    );
+                }
+                return;
+            }
+        }
+        Effect::ForEachCategory {
             action:
                 ForEachCategoryAction::PutCounter {
                     counter_type,
@@ -335,6 +388,24 @@ pub(crate) fn drain_pending_per_category_zone_choice(
     }
 
     let _ = prompt_next_category_member(state, &ability, &pool, remaining_member_filters, events);
+}
+
+/// CR 608.2g: Resume the `ForEachCategory` iteration after a successful
+/// cast-during-resolution. Called from `handle_resolution_cast_success` when
+/// `ForEachCategoryResume` fires. Returns the next `WaitingFor` if more
+/// members remain, or `None` when the iteration is complete.
+pub(crate) fn resume_for_each_category_cast(
+    state: &mut GameState,
+    ability: &ResolvedAbility,
+    pool: &[ObjectId],
+    remaining_member_filters: Vec<TargetFilter>,
+    events: &mut Vec<GameEvent>,
+) -> Option<Box<WaitingFor>> {
+    let _ = prompt_next_category_member(state, ability, pool, remaining_member_filters, events);
+    match &state.waiting_for {
+        WaitingFor::ChooseFromZoneChoice { .. } => Some(Box::new(state.waiting_for.clone())),
+        _ => None,
+    }
 }
 
 fn publish_tracked_set_unique(state: &mut GameState, ids: &[ObjectId]) {

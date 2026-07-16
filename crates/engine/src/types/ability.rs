@@ -120,6 +120,10 @@ pub enum IterationCategory {
     /// artifact, battle, creature, enchantment, instant, kindred, land,
     /// planeswalker, and sorcery — iterated in CR 205.2a order.
     CardType,
+    /// CR 205.2a: The nonland card types — artifact, battle, creature,
+    /// enchantment, instant, kindred, planeswalker, and sorcery — iterated in
+    /// CR 205.2a order. Used by Aminatou's Augury ("for each nonland card type").
+    NonlandCardType,
 }
 
 impl IterationCategory {
@@ -173,6 +177,27 @@ impl IterationCategory {
                 })
             })
             .collect(),
+            // CR 205.2a minus Land: the nonland card types offered in CR 205.2a
+            // order. Used by Aminatou's Augury ("for each nonland card type").
+            IterationCategory::NonlandCardType => [
+                TypeFilter::Artifact,
+                TypeFilter::Battle,
+                TypeFilter::Creature,
+                TypeFilter::Enchantment,
+                TypeFilter::Instant,
+                TypeFilter::Kindred,
+                TypeFilter::Planeswalker,
+                TypeFilter::Sorcery,
+            ]
+            .into_iter()
+            .map(|type_filter| {
+                TargetFilter::Typed(TypedFilter {
+                    type_filters: vec![type_filter],
+                    controller: None,
+                    properties: vec![],
+                })
+            })
+            .collect(),
         }
     }
 }
@@ -205,6 +230,16 @@ pub enum ForEachCategoryAction {
         counter_type: crate::types::counter::CounterType,
         /// CR 122.1: Number of counters placed per member iteration.
         count: QuantityExpr,
+    },
+    /// CR 608.2g + CR 118.9 + CR 205.2a: Cast one spell of the bound member from
+    /// the chain tracked pool without paying its mana cost — "for each nonland
+    /// card type, you may cast a spell of that type from among the exiled cards
+    /// without paying its mana cost" (Aminatou's Augury). The user picks which
+    /// card to cast via `ChooseFromZoneChoice`; the cast is initiated during
+    /// resolution with `ResolutionCastCost::Free`.
+    CastFreeFromPool {
+        /// The zone the pool cards currently reside in (Exile for Aminatou's Augury).
+        zone: Zone,
     },
 }
 
@@ -2870,6 +2905,15 @@ pub enum ResolutionCastSuccessAction {
         zones: Vec<Zone>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         exile_instead_of_graveyard: bool,
+    },
+    /// CR 608.2g + CR 205.2a: Resume a `ForEachCategory` / `CastFreeFromPool`
+    /// iteration after the current member's free cast resolves. Carries the
+    /// iteration state so `prompt_next_category_member` can advance to the next
+    /// nonland card type.
+    ForEachCategoryResume {
+        ability: Box<super::game_state::ResolvedAbility>,
+        pool: Vec<super::identifiers::ObjectId>,
+        remaining_member_filters: Vec<TargetFilter>,
     },
 }
 

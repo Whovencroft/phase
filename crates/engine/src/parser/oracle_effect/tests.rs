@@ -46483,3 +46483,63 @@ fn bandits_talent_level3_draw_counts_hellbent_opponents() {
         parsed.parse_warnings
     );
 }
+
+/// CR 608.2g: "For each nonland card type, you may cast a spell of that type
+/// from among the exiled cards without paying its mana cost" lowers to
+/// `Effect::ForEachCategory` with `NonlandCardType` + `CastFreeFromPool`.
+#[test]
+fn for_each_nonland_card_type_cast_free_from_exile() {
+    use crate::types::ability::IterationCategory;
+    use crate::types::zones::Zone;
+
+    let effect = parse_effect(
+        "for each nonland card type, you may cast a spell of that type from among the exiled cards without paying its mana cost",
+    );
+    let Effect::ForEachCategory {
+        category, action, ..
+    } = &effect
+    else {
+        panic!("expected ForEachCategory, got {effect:?}");
+    };
+    assert_eq!(
+        *category,
+        IterationCategory::NonlandCardType,
+        "category must be NonlandCardType"
+    );
+    match action {
+        ForEachCategoryAction::CastFreeFromPool { zone } => {
+            assert_eq!(*zone, Zone::Exile, "zone must be Exile");
+        }
+        other => panic!("expected CastFreeFromPool, got {other:?}"),
+    }
+}
+
+/// Full Oracle dispatch round-trip for Aminatou's Augury second sentence.
+#[test]
+fn aminatous_augury_full_dispatch() {
+    let oracle = concat!(
+        "Exile the top eight cards of your library. ",
+        "For each nonland card type, you may cast a spell of that type ",
+        "from among the exiled cards without paying its mana cost.",
+    );
+    let parsed = parse_oracle_text(oracle);
+    // The second effect (index 1) should be ForEachCategory.
+    assert!(
+        parsed.effects.len() >= 2,
+        "expected at least 2 effects, got {}",
+        parsed.effects.len()
+    );
+    let clause = &parsed.effects[1];
+    assert!(
+        matches!(
+            clause.effect,
+            Effect::ForEachCategory {
+                category: crate::types::ability::IterationCategory::NonlandCardType,
+                action: ForEachCategoryAction::CastFreeFromPool { .. },
+                ..
+            }
+        ),
+        "second effect must be ForEachCategory/CastFreeFromPool, got {:?}",
+        clause.effect
+    );
+}
