@@ -46535,31 +46535,24 @@ fn aminatous_augury_full_dispatch() {
         "expected at least one ability from Aminatou's Augury"
     );
     let ability = &parsed.abilities[0];
-    // Walk the chain to find the ForEachCategory node.
+    // Walk the AbilityDefinition chain to find the ForEachCategory node.
     fn has_for_each_category(def: &crate::types::ability::AbilityDefinition) -> bool {
-        fn walk(chain: &crate::types::ability::ResolvedAbility) -> bool {
-            if matches!(
-                &chain.effect,
-                Effect::ForEachCategory {
-                    category: crate::types::ability::IterationCategory::NonlandCardType,
-                    action: ForEachCategoryAction::CastFreeFromPool { .. },
-                    ..
-                }
-            ) {
+        if matches!(
+            &*def.effect,
+            Effect::ForEachCategory {
+                category: crate::types::ability::IterationCategory::NonlandCardType,
+                action: ForEachCategoryAction::CastFreeFromPool { .. },
+                ..
+            }
+        ) {
+            return true;
+        }
+        if let Some(ref sub) = def.sub_ability {
+            if has_for_each_category(sub) {
                 return true;
             }
-            if let Some(ref sub) = chain.sub_ability {
-                if walk(sub) {
-                    return true;
-                }
-            }
-            false
         }
-        match &def.ability {
-            crate::types::ability::Ability::Spell(chain)
-            | crate::types::ability::Ability::Activated { chain, .. } => walk(chain),
-            _ => false,
-        }
+        false
     }
     assert!(
         has_for_each_category(ability),
