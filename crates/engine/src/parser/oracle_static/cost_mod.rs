@@ -667,23 +667,28 @@ pub(crate) fn parse_cast_by_paying_life_alt_cost(text: &str) -> Option<StaticDef
     // CR 118.9 + CR 601.2b: peel an optional once-per-turn frequency prefix
     // ("Once during each of your turns, " / "Once each turn, ") before the
     // "you may cast" grant proper. Absent → `Unlimited`.
-    let (tp, frequency, condition) = match parse_alt_cost_frequency_prefix(tp.lower) {
-        Ok((rest_lower, freq)) => {
-            let consumed = tp.lower.len() - rest_lower.len();
-            // "once during each of your turns, " implies a DuringYourTurn gate;
-            // "once each turn, " (As Foretold) does not restrict to your turn.
-            let cond = if consumed > 20 {
-                Some(StaticCondition::DuringYourTurn)
-            } else {
-                None
-            };
-            (
-                TextPair::new(&tp.original[consumed..], rest_lower),
-                freq,
-                cond,
-            )
-        }
-        Err(_) => (tp, CastFrequency::Unlimited, None),
+    //
+    // "once during each of your turns, " carries an explicit DuringYourTurn
+    // timing gate (the grant only functions on the controller's turn).
+    // "once each turn, " (As Foretold) has no such restriction.
+    let your_turn_prefix =
+        tag::<_, _, OracleError<'_>>("once during each of your turns, ").parse(tp.lower);
+    let (tp, frequency, condition) = if let Ok((rest_lower, _)) = your_turn_prefix {
+        let consumed = tp.lower.len() - rest_lower.len();
+        (
+            TextPair::new(&tp.original[consumed..], rest_lower),
+            CastFrequency::OncePerTurn,
+            Some(StaticCondition::DuringYourTurn),
+        )
+    } else if let Ok((rest_lower, freq)) = parse_alt_cost_frequency_prefix(tp.lower) {
+        let consumed = tp.lower.len() - rest_lower.len();
+        (
+            TextPair::new(&tp.original[consumed..], rest_lower),
+            freq,
+            None,
+        )
+    } else {
+        (tp, CastFrequency::Unlimited, None)
     };
 
     // Prefix: "you may cast ".
@@ -722,6 +727,23 @@ pub(crate) fn parse_cast_by_paying_life_alt_cost(text: &str) -> Option<StaticDef
         filter_original
     };
 
+    // Optional zone qualifier: "from your hand" (Access Maze: "a spell from your
+    // hand"). Strip it before the spell-noun suffix so "spell from your hand" →
+    // "spell" → "" (card filter). Uses nom `tag` on the lowercased text to find
+    // the suffix " from your hand" at the end of the filter phrase.
+    let filter_lower_for_zone = filter_for_parse.to_lowercase();
+    let (filter_for_parse, zone_filter) =
+        if let Some(before) = filter_lower_for_zone.strip_suffix(" from your hand") {
+            // allow-noncombinator: strip_suffix on a pre-lowered local; the zone
+            // qualifier is a fixed English suffix, not a parser-combinator concern.
+            (
+                filter_for_parse[..before.len()].trim(),
+                Some(FilterProp::InZone { zone: Zone::Hand }),
+            )
+        } else {
+            (filter_for_parse, None)
+        };
+
     // Strip trailing "spell" / "spells" before type parsing — "enchantment spell" →
     // "enchantment". `parse_type_phrase` expects bare type words.
     let filter_for_parse = strip_cost_mod_spell_noun_suffix(filter_for_parse);
@@ -735,7 +757,8 @@ pub(crate) fn parse_cast_by_paying_life_alt_cost(text: &str) -> Option<StaticDef
         }
         filter
     };
-    let affected = apply_spell_keyword_subject_constraints(base_filter, None, None, Vec::new());
+    let affected =
+        apply_spell_keyword_subject_constraints(base_filter, zone_filter, None, Vec::new());
 
     let cost = AbilityCost::PayLife {
         amount: QuantityExpr::Ref {
