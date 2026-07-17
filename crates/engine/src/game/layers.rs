@@ -14035,6 +14035,7 @@ mod tests {
                 single_use: false,
                 cast_cost_raise: None,
                 land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                without_paying_mana_cost: false,
             });
 
         prune_end_of_turn_casting_permissions(&mut state);
@@ -14065,6 +14066,7 @@ mod tests {
             single_use: false,
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+            without_paying_mana_cost: false,
         });
         perms.push(CastingPermission::PlayFromExile {
             duration: Duration::Permanent,
@@ -14079,6 +14081,7 @@ mod tests {
             single_use: false,
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+            without_paying_mana_cost: false,
         });
         perms.push(CastingPermission::AdventureCreature);
 
@@ -14121,6 +14124,7 @@ mod tests {
                 single_use: false,
                 cast_cost_raise: None,
                 land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                without_paying_mana_cost: false,
             });
 
         // Untap step of the grantee's next turn: armed to UntilEndOfTurn, kept.
@@ -14212,6 +14216,7 @@ mod tests {
                 single_use: false,
                 cast_cost_raise: None,
                 land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                without_paying_mana_cost: false,
             });
         state
             .objects
@@ -14233,6 +14238,7 @@ mod tests {
                 single_use: false,
                 cast_cost_raise: None,
                 land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                without_paying_mana_cost: false,
             });
 
         // Active player is P0 — only P0's permission should expire.
@@ -14271,6 +14277,7 @@ mod tests {
                 single_use: false,
                 cast_cost_raise: None,
                 land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                without_paying_mana_cost: false,
             });
 
         prune_until_next_turn_casting_permissions(&mut state, PlayerId(0));

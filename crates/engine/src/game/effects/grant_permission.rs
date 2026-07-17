@@ -334,6 +334,7 @@ mod tests {
                     cast_cost_raise: None,
                     land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     invalidation: None,
+                    without_paying_mana_cost: false,
                 },
                 target: TargetFilter::Any,
                 grantee: PermissionGrantee::AbilityController,
@@ -397,6 +398,7 @@ mod tests {
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             invalidation: Some(PlayPermissionInvalidation::UntilNextGrantFromSameSource),
+            without_paying_mana_cost: false,
         };
         state
             .objects
@@ -477,6 +479,7 @@ mod tests {
                     cast_cost_raise: None,
                     land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     invalidation: None,
+                    without_paying_mana_cost: false,
                 },
                 target: TargetFilter::TrackedSet { id: tracked_set },
                 grantee: PermissionGrantee::AbilityController,
@@ -700,6 +703,7 @@ mod tests {
                     cast_cost_raise: None,
                     land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     invalidation: None,
+                    without_paying_mana_cost: false,
                 },
                 target: TargetFilter::Any,
                 grantee: PermissionGrantee::ObjectOwner,
@@ -757,6 +761,7 @@ mod tests {
                     cast_cost_raise: None,
                     land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     invalidation: None,
+                    without_paying_mana_cost: false,
                 },
                 target: TargetFilter::Any,
                 grantee: PermissionGrantee::ParentTargetController,
@@ -827,6 +832,7 @@ mod tests {
                     cast_cost_raise: None,
                     land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     invalidation: None,
+                    without_paying_mana_cost: false,
                 },
                 target: TargetFilter::Any,
                 grantee: PermissionGrantee::ObjectOwner,
@@ -909,6 +915,7 @@ mod tests {
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             invalidation: None,
+            without_paying_mana_cost: false,
         };
 
         state.objects.get_mut(&card_a).unwrap().casting_permissions = vec![mk_perm(
@@ -987,6 +994,7 @@ mod tests {
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             invalidation: None,
+            without_paying_mana_cost: false,
         };
         state
             .objects
@@ -1051,6 +1059,7 @@ mod tests {
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             invalidation: None,
+            without_paying_mana_cost: false,
         }];
 
         // Simulate the ordering in `turns.rs`:
@@ -1088,6 +1097,7 @@ mod tests {
                     cast_cost_raise: None,
                     land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     invalidation: None,
+                    without_paying_mana_cost: false,
                 },
                 target: TargetFilter::Any,
                 grantee: PermissionGrantee::ObjectOwner,
@@ -1158,6 +1168,7 @@ mod tests {
                 cast_cost_raise: None,
                 land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 invalidation: None,
+                without_paying_mana_cost: false,
             }];
 
         prune_end_of_turn_casting_permissions(&mut state);
@@ -1201,6 +1212,7 @@ mod tests {
                 cast_cost_raise: None,
                 land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 invalidation: None,
+                without_paying_mana_cost: false,
             }];
 
         prune_until_next_turn_casting_permissions(&mut state, PlayerId(0));
@@ -1259,6 +1271,7 @@ mod tests {
                     cast_cost_raise: None,
                     land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                     invalidation: None,
+                    without_paying_mana_cost: false,
                 },
                 target: TargetFilter::TrackedSet {
                     id: TrackedSetId(0),

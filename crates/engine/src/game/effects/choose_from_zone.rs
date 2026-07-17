@@ -3,15 +3,16 @@ use rand::seq::IndexedRandom; // rand 0.9: `choose_multiple` on `[T]` lives here
 use crate::game::filter::{matches_target_filter, FilterContext};
 use crate::game::players;
 use crate::types::ability::{
-    ChooseFromZoneConstraint, Chooser, Effect, EffectError, EffectKind, ForEachCategoryAction,
-    ParentTargetMissingReason, ResolvedAbility, TargetFilter, TargetRef, ZoneOwner,
+    CastingPermission, ChooseFromZoneConstraint, Chooser, Duration, Effect, EffectError,
+    EffectKind, ForEachCategoryAction, IterationCategory, ParentTargetMissingReason,
+    ResolvedAbility, TargetFilter, TargetRef, ZoneOwner,
 };
 use crate::types::card_type::CoreType;
 use crate::types::events::GameEvent;
 use crate::types::game_state::{GameState, ResolvingTriggerContext, WaitingFor};
-use crate::types::identifiers::ObjectId;
+use crate::types::identifiers::{ObjectId, TrackedSetId};
 use crate::types::player::PlayerId;
-use crate::types::zones::Zone;
+use crate::types::zones::{EtbTapState, Zone};
 
 /// CR 608.2d: Choose card(s) from a tracked set — player selects from exiled/revealed cards.
 /// The available cards come from the most recent tracked set recorded by the parent effect
@@ -138,11 +139,20 @@ pub fn resolve_for_each_category(
         } => (*category, action),
         _ => return Err(EffectError::MissingParam("ForEachCategory".to_string())),
     };
+    // GrantPerTypeCastPermission resolves synchronously — no parking needed.
+    if let ForEachCategoryAction::GrantPerTypeCastPermission {
+        without_paying_mana_cost,
+    } = action
+    {
+        resolve_grant_cast_permission_per_type(state, ability, *without_paying_mana_cost, events);
+        return Ok(());
+    }
     let pool = match action {
         ForEachCategoryAction::ExileFromPool { .. } => resolve_category_pool(state, ability),
         ForEachCategoryAction::PutCounter { target, .. } => {
             resolve_put_counter_pool(state, ability, target)
         }
+        ForEachCategoryAction::GrantPerTypeCastPermission { .. } => unreachable!(),
     };
     super::publish_fresh_tracked_set(state, Vec::new());
     let member_filters = match action {
@@ -154,6 +164,7 @@ pub fn resolve_for_each_category(
             })
             .collect(),
         ForEachCategoryAction::ExileFromPool { .. } => category.member_filters(),
+        ForEachCategoryAction::GrantPerTypeCastPermission { .. } => unreachable!(),
     };
     prompt_next_category_member(state, ability, &pool, member_filters, events)
 }
@@ -973,6 +984,107 @@ fn assign_distinct_categories(card_options: &[Vec<usize>], used: &mut [bool], id
         used[category_idx] = false;
     }
     false
+}
+
+/// Aminatou's Augury: for each nonland card type present in the exiled pool,
+/// stamp a single-use `PlayFromExile` permission on every matching card.
+/// The player gets to cast at most one spell of each type without paying its
+/// mana cost until end of turn (Gatherer 2018-07-13: "You must follow the
+/// normal timing permissions and restrictions of each spell you cast").
+/// The `single_use_group` ensures that casting one card of a given type
+/// consumes the permission for that entire type-category. A multi-type card
+/// (e.g. artifact creature) may satisfy either type slot (Gatherer 2018-07-13).
+fn resolve_grant_cast_permission_per_type(
+    state: &mut GameState,
+    ability: &ResolvedAbility,
+    without_paying_mana_cost: bool,
+    events: &mut Vec<GameEvent>,
+) {
+    let controller = ability.controller;
+    let source_id = ability.source_id;
+
+    // Collect the pool: all objects in the chain tracked set that are in exile.
+    let pool: Vec<ObjectId> = state
+        .chain_tracked_set_id
+        .and_then(|id| state.tracked_object_sets.get(&id).cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|id| {
+            state
+                .objects
+                .get(id)
+                .is_some_and(|obj| obj.zone == Zone::Exile)
+        })
+        .collect();
+
+    if pool.is_empty() {
+        events.push(GameEvent::EffectResolved {
+            kind: EffectKind::ChooseFromZone,
+            source_id,
+            subject: None,
+        });
+        return;
+    }
+
+    // For each nonland card type, find all matching cards and stamp a
+    // single-use PlayFromExile permission with a shared single_use_group.
+    // A multi-type card (e.g. artifact creature) is only stamped under the
+    // FIRST type it matches. Per Gatherer 2018-07-13: "If a nonland card has
+    // multiple types, such as an artifact creature, you may cast it as either
+    // of those types." By stamping once, the card occupies exactly one type
+    // slot, and casting it consumes only that slot — leaving the other type
+    // available for a different card.
+    let filter_ctx = FilterContext::from_ability(ability);
+    let category = IterationCategory::NonlandCardType;
+    let mut already_stamped: Vec<ObjectId> = Vec::new();
+    for type_filter in category.member_filters() {
+        let matching: Vec<ObjectId> = pool
+            .iter()
+            .copied()
+            .filter(|&id| {
+                !already_stamped.contains(&id)
+                    && matches_target_filter(state, id, &type_filter, &filter_ctx)
+            })
+            .collect();
+
+        if matching.is_empty() {
+            continue;
+        }
+
+        // Allocate a fresh TrackedSetId for this type's single_use_group.
+        let group_id = TrackedSetId(state.next_tracked_set_id);
+        state.next_tracked_set_id += 1;
+
+        // Stamp permission on every matching card in the pool for this type.
+        for obj_id in &matching {
+            let permission = CastingPermission::PlayFromExile {
+                duration: ability.duration.clone().unwrap_or(Duration::UntilEndOfTurn),
+                granted_to: controller,
+                frequency: crate::types::statics::CastFrequency::Unlimited,
+                source_id: Some(source_id),
+                exiled_by_ability_controller: None,
+                mana_spend_permission: None,
+                card_filter: Some(type_filter.clone()),
+                single_use_group: Some(group_id),
+                single_use: true,
+                cast_cost_raise: None,
+                land_enter_tapped: EtbTapState::Unspecified,
+                invalidation: None,
+                without_paying_mana_cost,
+            };
+            if let Some(obj_mut) = state.objects.get_mut(obj_id) {
+                obj_mut.casting_permissions.push(permission);
+            }
+        }
+        already_stamped.extend(matching);
+    }
+
+    // Emit a game event for the permission grant.
+    events.push(GameEvent::EffectResolved {
+        kind: EffectKind::ChooseFromZone,
+        source_id,
+        subject: None,
+    });
 }
 
 #[cfg(test)]

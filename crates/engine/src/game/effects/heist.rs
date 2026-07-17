@@ -223,6 +223,7 @@ pub fn resolve_exile(
                         single_use: false,
                         cast_cost_raise: None,
                         land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                        without_paying_mana_cost: false,
                     });
             }
         }

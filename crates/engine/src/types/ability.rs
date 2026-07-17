@@ -120,6 +120,9 @@ pub enum IterationCategory {
     /// artifact, battle, creature, enchantment, instant, kindred, land,
     /// planeswalker, and sorcery — iterated in CR 205.2a order.
     CardType,
+    /// CR 205.2a minus CR 305: The nonland card types — artifact, battle,
+    /// creature, enchantment, instant, kindred, planeswalker, and sorcery.
+    NonlandCardType,
 }
 
 impl IterationCategory {
@@ -173,6 +176,26 @@ impl IterationCategory {
                 })
             })
             .collect(),
+            // CR 205.2a minus CR 305: all card types except land.
+            IterationCategory::NonlandCardType => [
+                TypeFilter::Creature,
+                TypeFilter::Instant,
+                TypeFilter::Sorcery,
+                TypeFilter::Artifact,
+                TypeFilter::Enchantment,
+                TypeFilter::Planeswalker,
+                TypeFilter::Battle,
+                TypeFilter::Kindred,
+            ]
+            .into_iter()
+            .map(|type_filter| {
+                TargetFilter::Typed(TypedFilter {
+                    type_filters: vec![type_filter],
+                    controller: None,
+                    properties: vec![],
+                })
+            })
+            .collect(),
         }
     }
 }
@@ -205,6 +228,13 @@ pub enum ForEachCategoryAction {
         counter_type: crate::types::counter::CounterType,
         /// CR 122.1: Number of counters placed per member iteration.
         count: QuantityExpr,
+    },
+    /// CR 608.2c + CR 118.9: Aminatou's Augury class — stamp a single-use
+    /// `PlayFromExile` permission on each exiled card matching the iterated
+    /// nonland card type, allowing one free cast per type.
+    GrantPerTypeCastPermission {
+        /// When `true`, the stamped permission carries `without_paying_mana_cost`.
+        without_paying_mana_cost: bool,
     },
 }
 
@@ -2668,6 +2698,11 @@ pub enum CastingPermission {
         /// printed invalidation event occurs.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         invalidation: Option<PlayPermissionInvalidation>,
+        /// CR 118.9 + CR 608.2c: When `true`, the permission grants a free cast
+        /// (Aminatou's Augury). Consumed by `prepare_spell_cast` to zero the
+        /// mana cost for object-level PlayFromExile permissions.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        without_paying_mana_cost: bool,
     },
     /// CR 122.3: Cast from exile by paying {E} equal to the card's mana value.
     /// Building block for Amped Raptor and similar energy-based casting mechanics.

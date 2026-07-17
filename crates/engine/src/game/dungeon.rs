@@ -361,6 +361,7 @@ pub fn room_effects(
                         single_use: false,
                         cast_cost_raise: None,
                         land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                        without_paying_mana_cost: false,
                     },
                     target: TargetFilter::Any,
                     grantee: Default::default(),

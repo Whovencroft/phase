@@ -17126,6 +17126,7 @@ mod tests {
                     single_use: false,
                     cast_cost_raise: None,
                     land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                    without_paying_mana_cost: false,
                 },
                 target: TargetFilter::TrackedSet {
                     id: TrackedSetId(0),
@@ -20485,6 +20486,7 @@ mod tests {
                     single_use: false,
                     cast_cost_raise: None,
                     land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
+                    without_paying_mana_cost: false,
                 },
                 target: TargetFilter::TrackedSet {
                     id: TrackedSetId(0),

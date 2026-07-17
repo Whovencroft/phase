@@ -5997,7 +5997,9 @@ fn try_parse_for_each_category_exile(tp: TextPair<'_>) -> Option<ParsedEffectCla
     // The "that <member-noun>" must agree with the iterated category.
     let (rest, _) = match category {
         IterationCategory::Color => tag::<_, _, E>("color").parse(rest).ok()?,
-        IterationCategory::CardType => tag::<_, _, E>("type").parse(rest).ok()?,
+        IterationCategory::CardType | IterationCategory::NonlandCardType => {
+            tag::<_, _, E>("type").parse(rest).ok()?
+        }
     };
     let (rest, _) = tag::<_, _, E>(" from among ").parse(rest).ok()?;
     // CR 608.2c: the pool reference — "them" (anaphor for the revealed cards) or
@@ -6074,7 +6076,7 @@ fn try_parse_for_each_category_put_counter(tp: TextPair<'_>) -> Option<ParsedEff
     }
     let member_suffix = match category {
         IterationCategory::Color => "of that color",
-        IterationCategory::CardType => "of that type",
+        IterationCategory::CardType | IterationCategory::NonlandCardType => "of that type",
     };
     let rest = rest.trim();
     if !rest.starts_with(member_suffix) {
@@ -6128,6 +6130,35 @@ mod for_each_category_put_counter_tests {
             }
         ));
     }
+}
+
+/// Parse "for each nonland card type, you may cast a spell of that type from
+/// among the exiled cards without paying its mana cost" (Aminatou's Augury).
+fn try_parse_for_each_category_cast(tp: TextPair<'_>) -> Option<ParsedEffectClause> {
+    use crate::types::ability::{ForEachCategoryAction, IterationCategory};
+    type E<'a> = OracleError<'a>;
+    let text = tp.lower;
+    // Match the prefix: "for each nonland card type, "
+    let (rest, _) = tag::<_, _, E>("for each nonland card type, ")
+        .parse(text)
+        .ok()?;
+    // "you may cast a spell of that type from among the exiled cards without paying its mana cost"
+    let (rest, _) = tag::<_, _, E>("you may cast a spell of that type from among the exiled cards without paying its mana cost")
+        .parse(rest)
+        .ok()?;
+    // Consume trailing period if present and verify nothing remains.
+    let rest = rest.trim_start_matches('.').trim();
+    if !rest.is_empty() {
+        return None;
+    }
+    let effect = Effect::ForEachCategory {
+        category: IterationCategory::NonlandCardType,
+        action: ForEachCategoryAction::GrantPerTypeCastPermission {
+            without_paying_mana_cost: true,
+        },
+        chooser: Chooser::Controller,
+    };
+    Some(parsed_clause(effect))
 }
 
 fn unless_rider_defers_to_body_parser(text: &str) -> bool {
@@ -7692,6 +7723,10 @@ fn parse_effect_clause_inner(text: &str, ctx: &mut ParseContext) -> ParsedEffect
     }
 
     if let Some(clause) = try_parse_for_each_category_put_counter(tp) {
+        return clause;
+    }
+
+    if let Some(clause) = try_parse_for_each_category_cast(tp) {
         return clause;
     }
 
@@ -11287,6 +11322,7 @@ fn try_parse_per_grantee_play_grant(tp: TextPair<'_>) -> Option<ParsedEffectClau
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             invalidation: None,
+            without_paying_mana_cost: false,
         },
         target: TargetFilter::TrackedSet {
             id: TrackedSetId(0),
@@ -11407,6 +11443,7 @@ fn try_parse_cast_from_tracked_exile_grant(tp: TextPair<'_>) -> Option<ParsedEff
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             invalidation: None,
+            without_paying_mana_cost: false,
         },
         // CR 603.7 + CR 608.2c: TrackedSet sentinel — the runtime resolver
         // normalizes `TrackedSetId(0)` to the most recently published set
@@ -11499,6 +11536,7 @@ fn try_parse_exile_play_grant_with_any_mana(tp: TextPair<'_>) -> Option<ParsedEf
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             invalidation: None,
+            without_paying_mana_cost: false,
         },
         target,
         grantee,
@@ -11705,6 +11743,7 @@ fn try_parse_play_from_exile(tp: TextPair, ctx: &ParseContext) -> Option<ParsedE
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             invalidation,
+            without_paying_mana_cost: false,
         },
         // CR 603.7 + CR 611.2a: The grant must reach the tracked exile set
         // (the cards exiled by the prior clause) rather than fall back to the
@@ -11768,6 +11807,7 @@ fn try_parse_play_the_exiled_card_grant(tp: TextPair) -> Option<ParsedEffectClau
             cast_cost_raise: None,
             land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
             invalidation: None,
+            without_paying_mana_cost: false,
         },
         target: tracked_set_filter(),
         grantee: Default::default(),
@@ -11929,6 +11969,7 @@ pub(crate) fn parse_exile_top_each_library_with_collection_counter_ir(
                 cast_cost_raise: None,
                 land_enter_tapped: crate::types::zones::EtbTapState::Unspecified,
                 invalidation: None,
+                without_paying_mana_cost: false,
             },
             target: TargetFilter::TrackedSet {
                 id: TrackedSetId(0),

@@ -64,6 +64,7 @@ fn play_from_exile_grant() -> CastingPermission {
         single_use: false,
         cast_cost_raise: None,
         land_enter_tapped: EtbTapState::Unspecified,
+        without_paying_mana_cost: false,
     }
 }
 

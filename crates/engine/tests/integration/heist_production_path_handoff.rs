@@ -774,6 +774,7 @@ fn heist_full_production_path_grenzo_cast_etb_end_to_end() {
             CastingPermission::PlayFromExile {
                 mana_spend_permission: Some(ManaSpendPermission::AnyTypeOrColor),
                 exiled_by_ability_controller: Some(pid),
+                without_paying_mana_cost: false,
                 ..
             } if *pid == P0
         )),

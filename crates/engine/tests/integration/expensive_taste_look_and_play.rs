@@ -65,6 +65,7 @@ fn expensive_taste_grants_play_permission_on_exiled_opponent_cards() {
                 CastingPermission::PlayFromExile {
                     granted_to: P0,
                     duration: Duration::Permanent,
+                    without_paying_mana_cost: false,
                     ..
                 }
             )),

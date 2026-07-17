@@ -39618,6 +39618,7 @@ fn play_from_exile_until_source_exiles_another_card_has_source_invalidation() {
         let CastingPermission::PlayFromExile {
             duration,
             invalidation,
+            without_paying_mana_cost: false,
             ..
         } = permission
         else {
@@ -39654,6 +39655,7 @@ fn play_that_card_until_next_same_source_exile_has_source_invalidation() {
     let CastingPermission::PlayFromExile {
         duration,
         invalidation,
+        without_paying_mana_cost: false,
         ..
     } = permission
     else {

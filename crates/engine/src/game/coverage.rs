@@ -3181,6 +3181,7 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
                 match category {
                     crate::types::ability::IterationCategory::Color => "color".to_string(),
                     crate::types::ability::IterationCategory::CardType => "card type".to_string(),
+                    crate::types::ability::IterationCategory::NonlandCardType => "nonland card type".to_string(),
                 },
             ));
             match action {
@@ -3194,6 +3195,11 @@ fn effect_details(effect: &Effect) -> Vec<(String, String)> {
                 } => {
                     d.push(("target".into(), fmt_target(target)));
                     d.push(("counter_type".into(), counter_type.as_str().to_string()));
+                }
+                ForEachCategoryAction::GrantPerTypeCastPermission {
+                    without_paying_mana_cost,
+                } => {
+                    d.push(("without_paying_mana_cost".into(), without_paying_mana_cost.to_string()));
                 }
             }
         }

@@ -354,6 +354,7 @@ mod tests {
             cast_cost_raise: None,
             land_enter_tapped: EtbTapState::Unspecified,
             invalidation: None,
+            without_paying_mana_cost: false,
         }
     }
 

@@ -360,6 +360,7 @@ fn fireball_distribution_resume_preserves_elected_exile_permission() {
             single_use: false,
             cast_cost_raise: None,
             land_enter_tapped: EtbTapState::Unspecified,
+            without_paying_mana_cost: false,
         },
         CastingPermission::PlayFromExile {
             duration: Duration::Permanent,
@@ -374,6 +375,7 @@ fn fireball_distribution_resume_preserves_elected_exile_permission() {
             single_use: false,
             cast_cost_raise: None,
             land_enter_tapped: EtbTapState::Unspecified,
+            without_paying_mana_cost: false,
         },
     ];
 

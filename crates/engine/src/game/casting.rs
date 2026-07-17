@@ -5620,6 +5620,19 @@ fn prepare_spell_cast_with_variant_override_inner(
         } else {
             false
         };
+    // CR 118.9 + CR 608.2c: Object-level PlayFromExile with `without_paying_mana_cost: true`
+    // (Aminatou's Augury) — the permission itself carries the free-cast flag.
+    let play_from_exile_object_free = has_object_tagged_play_permission
+        && obj.casting_permissions.iter().any(|p| {
+            matches!(
+                p,
+                crate::types::ability::CastingPermission::PlayFromExile {
+                    granted_to,
+                    without_paying_mana_cost: true,
+                    ..
+                } if *granted_to == player
+            )
+        });
     // CR 118.9a: ExileWithAltCost { zero } / Discover / Suspend payoff — treat as
     // `NoCost` so the mana-payment phase is skipped identically to hand-free paths.
     let exile_alt_cost_free = alt_cost_from_exile
@@ -5774,6 +5787,7 @@ fn prepare_spell_cast_with_variant_override_inner(
         || next_spell_without_paying
         || is_hand_permission_variant
         || is_exile_permission_free_cast
+        || play_from_exile_object_free
         || exile_alt_cost_free
         || pure_non_mana_flashback
         || pure_non_mana_evoke

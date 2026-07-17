@@ -116,6 +116,7 @@ fn advanced_reconstruction_randomly_exiles_and_grants_play_permission() {
             permission,
             CastingPermission::PlayFromExile {
                 duration: Duration::UntilEndOfTurn,
+                without_paying_mana_cost: false,
                 granted_to,
                 ..
             } if *granted_to == P0

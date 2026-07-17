@@ -146,6 +146,7 @@ fn milled_card_is_castable_from_graveyard() {
                 p,
                 CastingPermission::PlayFromExile {
                     duration: Duration::UntilEndOfTurn,
+                    without_paying_mana_cost: false,
                     granted_to,
                     ..
                 } if *granted_to == P0
@@ -260,6 +261,7 @@ fn exiled_card_with_play_permission_stays_on_exile_path() {
                 single_use: false,
                 cast_cost_raise: None,
                 land_enter_tapped: EtbTapState::Unspecified,
+                without_paying_mana_cost: false,
             });
         id
     };
