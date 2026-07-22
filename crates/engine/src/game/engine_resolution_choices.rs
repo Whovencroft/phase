@@ -884,6 +884,29 @@ fn continuation_exiles_found_set(chain: &ResolvedAbility) -> bool {
     false
 }
 
+/// CR 607.2a + CR 608.2c: True when `filter` carries the `FilterProp::Another`
+/// exclusion at any structural position — directly on a `Typed` leg, or nested
+/// inside `And` / `Or` / `Not` / `TrackedSetFiltered` composition. Consumed by
+/// the `ChooseFromZoneChoice` handler to recognize an "other cards" continuation
+/// (Plargg and Nassari's "cast … from among the OTHER cards exiled this way"),
+/// whose target pool is the complement of the pick. Mirrors the recursion shape
+/// of `TargetFilter::references_exiled_by_source`.
+fn target_filter_carries_another(filter: &crate::types::ability::TargetFilter) -> bool {
+    use crate::types::ability::{FilterProp, TargetFilter};
+    match filter {
+        TargetFilter::Typed(tf) => tf
+            .properties
+            .iter()
+            .any(|p| matches!(p, FilterProp::Another)),
+        TargetFilter::And { filters } | TargetFilter::Or { filters } => {
+            filters.iter().any(target_filter_carries_another)
+        }
+        TargetFilter::Not { filter } => target_filter_carries_another(filter),
+        TargetFilter::TrackedSetFiltered { filter, .. } => target_filter_carries_another(filter),
+        _ => false,
+    }
+}
+
 /// Finalize the ordinary (non-partitioned) SearchChoice continuation. This is
 /// the single authority for both the synchronous selection path and a
 /// SearchFound batch resumed after one or more nested replacement pauses.
@@ -3798,7 +3821,35 @@ pub(super) fn handle_resolution_choice(
             }
             if let Some(frame) = state.active_ability_continuation_frame_mut() {
                 let cont = &mut frame.pending;
-                cont.chain.targets = chosen.iter().map(|&id| TargetRef::Object(id)).collect();
+                // CR 608.2c + CR 607.2a: An "other cards" continuation consumes
+                // the COMPLEMENT of the pick, not the pick itself. Plargg and
+                // Nassari: "An opponent chooses a nonland card exiled this way.
+                // You may cast up to two spells from among the OTHER cards
+                // exiled this way" — the parked continuation is a
+                // `CastFromZone` over the linked-exile set carrying the
+                // `FilterProp::Another` exclusion (`parse_from_among_exiled_
+                // this_way` lifts "the other cards exiled this way" to
+                // `And { ExiledBySource, Typed(card, Another, InZone Exile) }`).
+                // Binding the chosen card as its target list (the default
+                // partition below) would offer exactly the card the opponent
+                // removed from the pool; bind the unchosen remainder instead.
+                // Gated narrowly on the head being an exile-linked cast whose
+                // filter carries the `Another` exclusion so every existing
+                // chosen-consumer continuation (End-Blaze Epiphany's "you may
+                // play that card") is untouched.
+                let other_cards_cast_consumer = matches!(
+                    &cont.chain.effect,
+                    crate::types::ability::Effect::CastFromZone { target, .. }
+                        if target.references_exiled_by_source()
+                            && target_filter_carries_another(target)
+                );
+                if other_cards_cast_consumer {
+                    cont.chain.targets =
+                        unchosen.iter().map(|&id| TargetRef::Object(id)).collect();
+                } else {
+                    cont.chain.targets =
+                        chosen.iter().map(|&id| TargetRef::Object(id)).collect();
+                }
                 // CR 700.2 + CR 608.2c: The "unchosen" partition is forwarded
                 // to the sub-ability ONLY for the zone-partition pattern
                 // (`ChooseFromZone`: chosen cards go one place, the rest go

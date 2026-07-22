@@ -39425,6 +39425,108 @@ fn each_player_exiles_outer_effect_lowers_to_exile_from_top_until() {
     );
 }
 
+/// CR 607.2a + CR 608.2d: Plargg and Nassari's FULL upkeep-trigger body — all
+/// three sentences must assemble into one chain: the `player_scope: All`
+/// exile-until head, then the previously-Unimplemented middle sentence
+/// ("An opponent chooses a nonland card exiled this way") lowering to
+/// `ChooseFromZone { Exile, AllOwners, chooser: Opponent }` whose filter
+/// intersects the nonland type restriction with the `ExiledBySource` linked
+/// set, then the "cast … from among the OTHER cards exiled this way" tail as
+/// its `CastFromZone` sub-ability. The middle lowering exercises the
+/// subject-strip → imperative-fallback → opponent-chooser rebind seam in
+/// `lower_subject_predicate_ast`, and the same typed exiled-this-way anaphor
+/// covers Author of Shadows' subjectless "Choose a nonland card exiled this
+/// way."
+#[test]
+fn plargg_and_nassari_full_trigger_chain_choose_then_cast_others() {
+    let def = parse_effect_chain(
+        "each player exiles cards from the top of their library until they exile a nonland card. an opponent chooses a nonland card exiled this way. you may cast up to two spells from among the other cards exiled this way without paying their mana costs.",
+        AbilityKind::Spell,
+    );
+
+    assert_eq!(
+        def.player_scope,
+        Some(PlayerFilter::All),
+        "player_scope must propagate from \"each player\" subject"
+    );
+    assert!(
+        matches!(*def.effect, Effect::ExileFromTopUntil { .. }),
+        "head must be ExileFromTopUntil, got {:?}",
+        def.effect
+    );
+
+    let choose = def
+        .sub_ability
+        .as_ref()
+        .expect("middle sentence must attach as the first sub-ability");
+    let Effect::ChooseFromZone {
+        count,
+        ref zone,
+        ref zone_owner,
+        ref filter,
+        ref chooser,
+        ..
+    } = *choose.effect
+    else {
+        panic!("expected ChooseFromZone middle, got {:?}", choose.effect);
+    };
+    assert_eq!(count, 1);
+    assert_eq!(*zone, Zone::Exile);
+    assert_eq!(
+        *zone_owner,
+        ZoneOwner::AllOwners,
+        "CR 400.1: exile is shared — ownership must not gate the pool"
+    );
+    assert_eq!(
+        *chooser,
+        Chooser::Opponent,
+        "CR 608.2d: the \"an opponent\" subject must rebind the chooser"
+    );
+    let Some(TargetFilter::And { ref filters }) = *filter else {
+        panic!("expected And{{Typed, ExiledBySource}} filter, got {filter:?}");
+    };
+    assert!(
+        filters.contains(&TargetFilter::ExiledBySource),
+        "CR 607.2a: \"exiled this way\" must reference the linked-exile set"
+    );
+    assert!(
+        filters.iter().any(|f| matches!(
+            f,
+            TargetFilter::Typed(tf)
+                if tf.type_filters.iter().any(
+                    |t| matches!(t, TypeFilter::Non(inner) if matches!(**inner, TypeFilter::Land))
+                )
+        )),
+        "the nonland qualifier must survive into the choose filter"
+    );
+
+    let cast = choose
+        .sub_ability
+        .as_ref()
+        .expect("the cast tail must nest under the choose");
+    let Effect::CastFromZone {
+        ref target,
+        without_paying_mana_cost,
+        ..
+    } = *cast.effect
+    else {
+        panic!("expected CastFromZone tail, got {:?}", cast.effect);
+    };
+    assert!(without_paying_mana_cost, "free-cast rider must survive");
+    let TargetFilter::And { filters: ref cf } = *target else {
+        panic!("expected And cast target, got {target:?}");
+    };
+    assert!(cf.contains(&TargetFilter::ExiledBySource));
+    assert!(
+        cf.iter().any(|f| matches!(
+            f,
+            TargetFilter::Typed(tf)
+                if tf.properties.contains(&FilterProp::Another)
+        )),
+        "\"the OTHER cards\" must carry FilterProp::Another"
+    );
+}
+
 #[test]
 fn parser_shape_evelyn_exiles_each_library_with_collection_counter_and_permission() {
     let def = parse_effect_chain(

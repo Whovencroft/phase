@@ -18592,6 +18592,31 @@ fn lower_subject_predicate_ast(
                 }
                 return clause;
             }
+            // CR 608.2d: "An opponent chooses a nonland card exiled this way"
+            // (Plargg and Nassari) — `strip_subject_clause` peeled the
+            // "an opponent" subject and deconjugated the predicate to "choose
+            // a nonland card exiled this way", which the imperative layer
+            // lowered to `ChooseFromZone` with the default `Chooser::Controller`.
+            // The subject names the selecting player, not an affected object,
+            // so rebind the chooser to `Chooser::Opponent` (the same delegation
+            // `try_parse_return_opponent_choice_from_graveyard` encodes for
+            // "of an opponent's choice"). Matched narrowly on the bare
+            // single-opponent player filter the "an opponent" / "your opponent"
+            // subject arms produce (subject.rs `parse_subject_application`) —
+            // typed or property-carrying subjects fall through to the honesty
+            // gate below.
+            if let Effect::ChooseFromZone { chooser, .. } = &mut clause.effect {
+                if matches!(
+                    &subject.affected,
+                    TargetFilter::Typed(tf)
+                        if tf.controller == Some(ControllerRef::Opponent)
+                            && tf.type_filters.is_empty()
+                            && tf.properties.is_empty()
+                ) {
+                    *chooser = crate::types::ability::Chooser::Opponent;
+                    return clause;
+                }
+            }
             if matches!(
                 &clause.effect,
                 Effect::ChooseFromZone {

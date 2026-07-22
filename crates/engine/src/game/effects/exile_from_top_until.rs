@@ -937,6 +937,182 @@ mod tests {
         }
     }
 
+    /// CR 607.2a + CR 608.2d + CR 101.4: Plargg and Nassari — `player_scope: All`
+    /// exile-until with a DETACHED opponent-chooser continuation: after every
+    /// player's iteration links its exiles, the once-only tail `ChooseFromZone
+    /// { Exile, AllOwners, And { nonland, ExiledBySource }, chooser: Opponent }`
+    /// must park a `ChooseFromZoneChoice` for the OPPONENT over exactly the
+    /// linked nonland hits (never the lands), and — after the pick — the
+    /// `CastFromZone` continuation over "the OTHER cards exiled this way"
+    /// (`FilterProp::Another` + `ExiledBySource`) must receive the UNCHOSEN
+    /// complement, granting zero-cost permissions to the other hits while the
+    /// opponent's pick and the lands get none. Reverting the unchosen-complement
+    /// binding in the `ChooseFromZoneChoice` handler grants the permission to
+    /// the chosen card instead and fails the negative assertions.
+    #[test]
+    fn plargg_opponent_chooses_nonland_hit_then_cast_pool_is_the_other_hits() {
+        use crate::types::ability::{CardSelectionMode, Chooser, ZoneOwner};
+        let mut state = GameState::new(FormatConfig::standard(), 3, 42);
+        let source = create_object(
+            &mut state,
+            CardId(100),
+            PlayerId(0),
+            "Plargg and Nassari".to_string(),
+            Zone::Battlefield,
+        );
+
+        // Each player's library: one Land then one Creature (the nonland hit).
+        let p0_land = add_library_card(&mut state, PlayerId(0), "P0 Forest", true);
+        let p0_hit = add_library_card(&mut state, PlayerId(0), "P0 Beast", false);
+        state.players[0].library = crate::im::vector![p0_land, p0_hit];
+
+        let p1_land = add_library_card(&mut state, PlayerId(1), "P1 Mountain", true);
+        let p1_hit = add_library_card(&mut state, PlayerId(1), "P1 Goblin", false);
+        state.players[1].library = crate::im::vector![p1_land, p1_hit];
+
+        let p2_land = add_library_card(&mut state, PlayerId(2), "P2 Plains", true);
+        let p2_hit = add_library_card(&mut state, PlayerId(2), "P2 Soldier", false);
+        state.players[2].library = crate::im::vector![p2_land, p2_hit];
+
+        // Sentence 3: "You may cast up to two spells from among the OTHER cards
+        // exiled this way without paying their mana costs" — the parser's shape
+        // is And { ExiledBySource, Typed(card, Another, InZone Exile) }.
+        let cast_sub = ResolvedAbility::new(
+            Effect::CastFromZone {
+                target: TargetFilter::And {
+                    filters: vec![
+                        TargetFilter::ExiledBySource,
+                        TargetFilter::Typed(
+                            TypedFilter::default().with_type(TypeFilter::Card).properties(
+                                vec![
+                                    FilterProp::Another,
+                                    FilterProp::InZone { zone: Zone::Exile },
+                                ],
+                            ),
+                        ),
+                    ],
+                },
+                without_paying_mana_cost: true,
+                mode: CardPlayMode::Cast,
+                cast_transformed: false,
+                alt_ability_cost: None,
+                constraint: None,
+                duration: None,
+                driver: CastFromZoneDriver::LingeringPermission,
+                mana_spend_permission: None,
+            },
+            vec![],
+            source,
+            PlayerId(0),
+        );
+
+        // Sentence 2: "An opponent chooses a nonland card exiled this way" — the
+        // new typed exiled-this-way anaphor shape.
+        let mut choose_sub = ResolvedAbility::new(
+            Effect::ChooseFromZone {
+                count: 1,
+                zone: Zone::Exile,
+                additional_zones: vec![],
+                zone_owner: ZoneOwner::AllOwners,
+                filter: Some(TargetFilter::And {
+                    filters: vec![nonland_filter(), TargetFilter::ExiledBySource],
+                }),
+                chooser: Chooser::Opponent,
+                up_to: false,
+                selection: CardSelectionMode::Chosen,
+                constraint: None,
+            },
+            vec![],
+            source,
+            PlayerId(0),
+        );
+        choose_sub.sub_ability = Some(Box::new(cast_sub));
+
+        let mut wrapped = ResolvedAbility::new(
+            Effect::ExileFromTopUntil {
+                player: TargetFilter::Controller,
+                until: UntilCondition::NextMatches {
+                    filter: nonland_filter(),
+                },
+            },
+            vec![],
+            source,
+            PlayerId(0),
+        );
+        wrapped.player_scope = Some(PlayerFilter::All);
+        wrapped.sub_ability = Some(Box::new(choose_sub));
+
+        let mut events = Vec::new();
+        super::super::resolve_ability_chain(&mut state, &wrapped, &mut events, 0).unwrap();
+
+        // All six cards are exiled and linked before the detached choose parks.
+        for id in &[p0_land, p0_hit, p1_land, p1_hit, p2_land, p2_hit] {
+            assert_eq!(state.objects[id].zone, Zone::Exile, "{id:?} must be exiled");
+        }
+
+        // CR 608.2d + CR 101.4: the pause must belong to an OPPONENT of the
+        // controller, offering exactly the three nonland hits (lands filtered).
+        let (chooser_player, offered) = match &state.waiting_for {
+            WaitingFor::ChooseFromZoneChoice {
+                player,
+                cards,
+                count,
+                ..
+            } => {
+                assert_eq!(*count, 1, "exactly one card is chosen");
+                (*player, cards.clone())
+            }
+            other => panic!("expected ChooseFromZoneChoice pause, got {other:?}"),
+        };
+        assert_ne!(
+            chooser_player,
+            PlayerId(0),
+            "CR 608.2d: the CHOOSER must be an opponent, not Plargg's controller"
+        );
+        let mut offered_sorted = offered.clone();
+        offered_sorted.sort();
+        let mut expected_hits = vec![p0_hit, p1_hit, p2_hit];
+        expected_hits.sort();
+        assert_eq!(
+            offered_sorted, expected_hits,
+            "choice pool must be the nonland hits exiled this way (no lands)"
+        );
+
+        // The opponent picks P1's Goblin.
+        apply(
+            &mut state,
+            chooser_player,
+            GameAction::SelectCards {
+                cards: vec![p1_hit],
+            },
+        )
+        .unwrap();
+
+        // CR 607.2a: "the OTHER cards exiled this way" — the cast permission
+        // must land on the two UNCHOSEN hits only.
+        for &other_hit in &[p0_hit, p2_hit] {
+            let perms = &state.objects[&other_hit].casting_permissions;
+            assert!(
+                perms.iter().any(|p| matches!(
+                    p,
+                    CastingPermission::ExileWithAltCost { cost, granted_to: Some(g), .. }
+                        if *cost == ManaCost::zero() && *g == PlayerId(0)
+                )),
+                "unchosen hit {other_hit:?} must carry the zero-cost permission, got {perms:?}"
+            );
+        }
+        assert!(
+            state.objects[&p1_hit].casting_permissions.is_empty(),
+            "the opponent's pick must NOT be castable — it is not one of the OTHER cards"
+        );
+        for &land in &[p0_land, p1_land, p2_land] {
+            assert!(
+                state.objects[&land].casting_permissions.is_empty(),
+                "land {land:?} must not gain casting permissions"
+            );
+        }
+    }
+
     /// CR 608.2 + CR 111.2: Akroan Horse-shape — `Effect::Token` with
     /// `owner: TargetFilter::Controller` under `player_scope: Opponent`
     /// rebinds Controller per-iteration so each opponent owns the token they
