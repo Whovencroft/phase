@@ -983,12 +983,12 @@ mod tests {
                     filters: vec![
                         TargetFilter::ExiledBySource,
                         TargetFilter::Typed(
-                            TypedFilter::default().with_type(TypeFilter::Card).properties(
-                                vec![
+                            TypedFilter::default()
+                                .with_type(TypeFilter::Card)
+                                .properties(vec![
                                     FilterProp::Another,
                                     FilterProp::InZone { zone: Zone::Exile },
-                                ],
-                            ),
+                                ]),
                         ),
                     ],
                 },

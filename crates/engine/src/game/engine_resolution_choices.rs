@@ -3844,11 +3844,9 @@ pub(super) fn handle_resolution_choice(
                             && target_filter_carries_another(target)
                 );
                 if other_cards_cast_consumer {
-                    cont.chain.targets =
-                        unchosen.iter().map(|&id| TargetRef::Object(id)).collect();
+                    cont.chain.targets = unchosen.iter().map(|&id| TargetRef::Object(id)).collect();
                 } else {
-                    cont.chain.targets =
-                        chosen.iter().map(|&id| TargetRef::Object(id)).collect();
+                    cont.chain.targets = chosen.iter().map(|&id| TargetRef::Object(id)).collect();
                 }
                 // CR 700.2 + CR 608.2c: The "unchosen" partition is forwarded
                 // to the sub-ability ONLY for the zone-partition pattern
