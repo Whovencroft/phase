@@ -728,7 +728,7 @@ fn resolve_candidate_cards(
     filter: Option<&TargetFilter>,
 ) -> Result<Vec<ObjectId>, EffectError> {
     if let Some(cards) = chain_tracked_set_cards(state) {
-        return Ok(cards);
+        return Ok(retain_matching_candidates(state, ability, cards, filter));
     }
 
     let cards = crate::game::targeting::latest_tracked_set_id(state)
@@ -747,10 +747,33 @@ fn resolve_candidate_cards(
     let cards = if cards.is_empty() {
         collect_direct_zone_cards(state, ability, zone, additional_zones, zone_owner, filter)?
     } else {
-        cards
+        retain_matching_candidates(state, ability, cards, filter)
     };
 
     Ok(cards)
+}
+
+/// CR 608.2d: Narrow a tracked-set (or explicit-target) candidate pool through
+/// the effect's own card filter. A typed restriction like "choose a NONLAND
+/// card exiled this way" (Plargg and Nassari, Author of Shadows) must constrain
+/// the pool even when the candidates arrive from the chain's tracked set — the
+/// set records every card the preceding clause exiled, lands included, but only
+/// the nonland ones are legal picks. `filter: None` (the bare "choose one of
+/// them" anaphor) keeps the raw set, preserving the untyped tracked-set path.
+fn retain_matching_candidates(
+    state: &GameState,
+    ability: &ResolvedAbility,
+    cards: Vec<ObjectId>,
+    filter: Option<&TargetFilter>,
+) -> Vec<ObjectId> {
+    let Some(filter) = filter else {
+        return cards;
+    };
+    let filter_ctx = FilterContext::from_ability(ability);
+    cards
+        .into_iter()
+        .filter(|id| matches_target_filter(state, *id, filter, &filter_ctx))
+        .collect()
 }
 
 fn chain_tracked_set_cards(state: &GameState) -> Option<Vec<ObjectId>> {
