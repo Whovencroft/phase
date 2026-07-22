@@ -952,6 +952,7 @@ mod tests {
     #[test]
     fn plargg_opponent_chooses_nonland_hit_then_cast_pool_is_the_other_hits() {
         use crate::types::ability::{CardSelectionMode, Chooser, ZoneOwner};
+        use crate::types::game_state::WaitingFor;
         let mut state = GameState::new(FormatConfig::standard(), 3, 42);
         let source = create_object(
             &mut state,
