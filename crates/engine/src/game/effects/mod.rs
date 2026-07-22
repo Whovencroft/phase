@@ -4249,6 +4249,17 @@ fn effect_references_tracked_set(effect: &Effect) -> bool {
             return true;
         }
     }
+    // CR 608.2g: `FreeCastFromZones` carries its candidate filter in `filter`,
+    // which `Effect::target_filter()` does not expose (the window offers casts
+    // rather than selecting spell targets). Plargg and Nassari's "the other
+    // cards exiled this way" is `Not(InTrackedSet)` over the opponent's chosen
+    // card, so a chained free-cast window must trigger publication of the
+    // chosen card as the fresh tracked set.
+    if let Effect::FreeCastFromZones { filter, .. } = effect {
+        if filter_references_tracked_set(filter) {
+            return true;
+        }
+    }
     if let Effect::SetTapState {
         scope: EffectScope::All,
         target,

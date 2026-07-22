@@ -3100,6 +3100,13 @@ pub enum ResolutionCastSuccessAction {
         zones: Vec<Zone>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         exile_instead_of_graveyard: bool,
+        /// CR 406.6: Source object of the granting ability, threaded so
+        /// `ExiledBySource`-style filters (Plargg and Nassari) can rebuild the
+        /// re-offer candidate set against the right exile links. Zero sentinel
+        /// for saved states predating the field (graveyard/hand windows never
+        /// read it).
+        #[serde(default = "super::game_state::zero_object_id")]
+        source: super::identifiers::ObjectId,
     },
 }
 

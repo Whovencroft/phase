@@ -1078,6 +1078,7 @@ pub fn filter_state_for_viewer(state: &GameState, viewer: PlayerId) -> GameState
                 ref filter,
                 ref zones,
                 exile_instead_of_graveyard,
+                source,
             },
     } = state.waiting_for
     {
@@ -1091,6 +1092,7 @@ pub fn filter_state_for_viewer(state: &GameState, viewer: PlayerId) -> GameState
                     filter: filter.clone(),
                     zones: zones.clone(),
                     exile_instead_of_graveyard,
+                    source,
                 },
             };
         }

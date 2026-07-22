@@ -938,22 +938,22 @@ mod tests {
     }
 
     /// CR 607.2a + CR 608.2d + CR 101.4: Plargg and Nassari — `player_scope: All`
-    /// exile-until with a DETACHED opponent-chooser continuation: after every
-    /// player's iteration links its exiles, the once-only tail `ChooseFromZone
-    /// { Exile, AllOwners, And { nonland, ExiledBySource }, chooser: Opponent }`
-    /// must park a `ChooseFromZoneChoice` for the OPPONENT over exactly the
-    /// linked nonland hits (never the lands), and — after the pick — the
-    /// `CastFromZone` continuation over "the OTHER cards exiled this way"
-    /// (`FilterProp::Another` + `ExiledBySource`) must receive the UNCHOSEN
-    /// complement, granting zero-cost permissions to the other hits while the
-    /// opponent's pick and the lands get none. Reverting the unchosen-complement
-    /// binding in the `ChooseFromZoneChoice` handler grants the permission to
-    /// the chosen card instead and fails the negative assertions.
+    /// exile-until with a DETACHED opponent-chooser continuation. In a
+    /// four-player game the tail runs once and pauses THREE times in order:
+    /// (1) `ChooseFromZoneOpponentChooser` — the CONTROLLER picks which of the
+    /// three live opponents makes the choice (Plargg's release notes: "you
+    /// choose which opponent gets to choose one of the exiled nonland cards");
+    /// (2) `ChooseFromZoneChoice` — the picked opponent chooses over exactly
+    /// the linked nonland hits (never the lands); (3) `CastOffer` with a
+    /// `FreeCastWindow` capped at TWO casts ("up to two spells") whose
+    /// candidate pool is the UNCHOSEN hits only — the opponent's pick is
+    /// excluded by `Not(InTrackedSet 0)` over the freshly-published chosen
+    /// set, and lands are excluded by the cast-mode land guard (CR 305.1).
     #[test]
     fn plargg_opponent_chooses_nonland_hit_then_cast_pool_is_the_other_hits() {
         use crate::types::ability::{CardSelectionMode, Chooser, ZoneOwner};
-        use crate::types::game_state::WaitingFor;
-        let mut state = GameState::new(FormatConfig::standard(), 3, 42);
+        use crate::types::game_state::{CastOfferKind, WaitingFor};
+        let mut state = GameState::new(FormatConfig::standard(), 4, 42);
         let source = create_object(
             &mut state,
             CardId(100),
@@ -975,32 +975,38 @@ mod tests {
         let p2_hit = add_library_card(&mut state, PlayerId(2), "P2 Soldier", false);
         state.players[2].library = crate::im::vector![p2_land, p2_hit];
 
+        let p3_land = add_library_card(&mut state, PlayerId(3), "P3 Island", true);
+        let p3_hit = add_library_card(&mut state, PlayerId(3), "P3 Merfolk", false);
+        state.players[3].library = crate::im::vector![p3_land, p3_hit];
+
         // Sentence 3: "You may cast up to two spells from among the OTHER cards
-        // exiled this way without paying their mana costs" — the parser's shape
-        // is And { ExiledBySource, Typed(card, Another, InZone Exile) }.
+        // exiled this way without paying their mana costs" — the parser lowers
+        // this to a during-resolution free-cast window (ruling 2021-04-16: the
+        // spells are cast during the ability's resolution) capped at two casts,
+        // with "other" rewritten to `Not(InTrackedSet 0)` over the chosen set.
         let cast_sub = ResolvedAbility::new(
-            Effect::CastFromZone {
-                target: TargetFilter::And {
+            Effect::FreeCastFromZones {
+                count: 2,
+                max_total_mv: None,
+                filter: TargetFilter::And {
                     filters: vec![
                         TargetFilter::ExiledBySource,
                         TargetFilter::Typed(
                             TypedFilter::default()
                                 .with_type(TypeFilter::Card)
                                 .properties(vec![
-                                    FilterProp::Another,
+                                    FilterProp::Not {
+                                        prop: Box::new(FilterProp::InTrackedSet {
+                                            id: crate::types::identifiers::TrackedSetId(0),
+                                        }),
+                                    },
                                     FilterProp::InZone { zone: Zone::Exile },
                                 ]),
                         ),
                     ],
                 },
-                without_paying_mana_cost: true,
-                mode: CardPlayMode::Cast,
-                cast_transformed: false,
-                alt_ability_cost: None,
-                constraint: None,
-                duration: None,
-                driver: CastFromZoneDriver::LingeringPermission,
-                mana_spend_permission: None,
+                zones: vec![Zone::Exile],
+                exile_instead_of_graveyard: false,
             },
             vec![],
             source,
@@ -1046,14 +1052,51 @@ mod tests {
         let mut events = Vec::new();
         super::super::resolve_ability_chain(&mut state, &wrapped, &mut events, 0).unwrap();
 
-        // All six cards are exiled and linked before the detached choose parks.
-        for id in &[p0_land, p0_hit, p1_land, p1_hit, p2_land, p2_hit] {
+        // All eight cards are exiled and linked before the detached choose parks.
+        for id in &[
+            p0_land, p0_hit, p1_land, p1_hit, p2_land, p2_hit, p3_land, p3_hit,
+        ] {
             assert_eq!(state.objects[id].zone, Zone::Exile, "{id:?} must be exiled");
         }
 
-        // CR 608.2d + CR 101.4: the pause must belong to an OPPONENT of the
-        // controller, offering exactly the three nonland hits (lands filtered).
-        let (chooser_player, offered) = match &state.waiting_for {
+        // Pause 1 — CR 608.2d: with three live opponents, the CONTROLLER must
+        // first be asked which opponent makes the choice.
+        let picker_candidates = match &state.waiting_for {
+            WaitingFor::ChooseFromZoneOpponentChooser {
+                player,
+                candidates,
+                ..
+            } => {
+                assert_eq!(
+                    *player,
+                    PlayerId(0),
+                    "the CONTROLLER picks which opponent chooses"
+                );
+                candidates.clone()
+            }
+            other => panic!("expected ChooseFromZoneOpponentChooser pause, got {other:?}"),
+        };
+        let mut sorted_candidates = picker_candidates.clone();
+        sorted_candidates.sort();
+        assert_eq!(
+            sorted_candidates,
+            vec![PlayerId(1), PlayerId(2), PlayerId(3)],
+            "every live opponent must be offered as the chooser"
+        );
+
+        // The controller picks PlayerId(2) as the chooser.
+        apply(
+            &mut state,
+            PlayerId(0),
+            GameAction::ChooseZoneOpponentChooser {
+                opponent: PlayerId(2),
+            },
+        )
+        .unwrap();
+
+        // Pause 2 — CR 608.2d: the zone choice must belong to the PICKED
+        // opponent, offering exactly the four nonland hits (lands filtered).
+        let offered = match &state.waiting_for {
             WaitingFor::ChooseFromZoneChoice {
                 player,
                 cards,
@@ -1061,56 +1104,141 @@ mod tests {
                 ..
             } => {
                 assert_eq!(*count, 1, "exactly one card is chosen");
-                (*player, cards.clone())
+                assert_eq!(
+                    *player,
+                    PlayerId(2),
+                    "the zone choice must go to the opponent the controller picked"
+                );
+                cards.clone()
             }
             other => panic!("expected ChooseFromZoneChoice pause, got {other:?}"),
         };
-        assert_ne!(
-            chooser_player,
-            PlayerId(0),
-            "CR 608.2d: the CHOOSER must be an opponent, not Plargg's controller"
-        );
         let mut offered_sorted = offered.clone();
         offered_sorted.sort();
-        let mut expected_hits = vec![p0_hit, p1_hit, p2_hit];
+        let mut expected_hits = vec![p0_hit, p1_hit, p2_hit, p3_hit];
         expected_hits.sort();
         assert_eq!(
             offered_sorted, expected_hits,
             "choice pool must be the nonland hits exiled this way (no lands)"
         );
 
-        // The opponent picks P1's Goblin.
+        // The picked opponent chooses P1's Goblin.
         apply(
             &mut state,
-            chooser_player,
+            PlayerId(2),
             GameAction::SelectCards {
                 cards: vec![p1_hit],
             },
         )
         .unwrap();
 
-        // CR 607.2a: "the OTHER cards exiled this way" — the cast permission
-        // must land on the two UNCHOSEN hits only.
-        for &other_hit in &[p0_hit, p2_hit] {
-            let perms = &state.objects[&other_hit].casting_permissions;
-            assert!(
-                perms.iter().any(|p| matches!(
-                    p,
-                    CastingPermission::ExileWithAltCost { cost, granted_to: Some(g), .. }
-                        if *cost == ManaCost::zero() && *g == PlayerId(0)
-                )),
-                "unchosen hit {other_hit:?} must carry the zero-cost permission, got {perms:?}"
-            );
+        // Pause 3 — CR 607.2a + ruling 2021-04-16: the free-cast window opens
+        // for the CONTROLLER, capped at TWO casts, over "the OTHER cards exiled
+        // this way" — the three unchosen hits. The chosen Goblin is excluded by
+        // `Not(InTrackedSet 0)` over the freshly-published chosen set, and the
+        // lands are excluded by the cast-mode land guard (CR 305.1).
+        match &state.waiting_for {
+            WaitingFor::CastOffer {
+                player,
+                kind:
+                    CastOfferKind::FreeCastWindow {
+                        candidates,
+                        remaining_casts,
+                        ..
+                    },
+            } => {
+                assert_eq!(
+                    *player,
+                    PlayerId(0),
+                    "the free-cast window belongs to Plargg's controller"
+                );
+                assert_eq!(
+                    *remaining_casts, 2,
+                    "'up to two spells' — the window is capped at two casts"
+                );
+                let mut pool = candidates.clone();
+                pool.sort();
+                let mut expected_pool = vec![p0_hit, p2_hit, p3_hit];
+                expected_pool.sort();
+                assert_eq!(
+                    pool, expected_pool,
+                    "cast pool must be the UNCHOSEN hits only (no chosen card, no lands)"
+                );
+            }
+            other => panic!("expected FreeCastWindow cast offer, got {other:?}"),
         }
-        assert!(
-            state.objects[&p1_hit].casting_permissions.is_empty(),
-            "the opponent's pick must NOT be castable — it is not one of the OTHER cards"
+    }
+
+    /// CR 608.2d two-player regression: with exactly ONE live opponent there is
+    /// nothing for the controller to decide, so the opponent-picker pause must
+    /// be skipped and the zone choice presented directly to that opponent.
+    #[test]
+    fn plargg_two_player_skips_the_opponent_picker_pause() {
+        use crate::types::ability::{CardSelectionMode, Chooser, ZoneOwner};
+        use crate::types::game_state::WaitingFor;
+        let mut state = GameState::new_two_player(7);
+        let source = create_object(
+            &mut state,
+            CardId(100),
+            PlayerId(0),
+            "Plargg and Nassari".to_string(),
+            Zone::Battlefield,
         );
-        for &land in &[p0_land, p1_land, p2_land] {
-            assert!(
-                state.objects[&land].casting_permissions.is_empty(),
-                "land {land:?} must not gain casting permissions"
-            );
+
+        let p0_hit = add_library_card(&mut state, PlayerId(0), "P0 Beast", false);
+        state.players[0].library = crate::im::vector![p0_hit];
+        let p1_hit = add_library_card(&mut state, PlayerId(1), "P1 Goblin", false);
+        state.players[1].library = crate::im::vector![p1_hit];
+
+        let mut choose_sub = ResolvedAbility::new(
+            Effect::ChooseFromZone {
+                count: 1,
+                zone: Zone::Exile,
+                additional_zones: vec![],
+                zone_owner: ZoneOwner::AllOwners,
+                filter: Some(TargetFilter::And {
+                    filters: vec![nonland_filter(), TargetFilter::ExiledBySource],
+                }),
+                chooser: Chooser::Opponent,
+                up_to: false,
+                selection: CardSelectionMode::Chosen,
+                constraint: None,
+            },
+            vec![],
+            source,
+            PlayerId(0),
+        );
+        choose_sub.sub_ability = None;
+
+        let mut wrapped = ResolvedAbility::new(
+            Effect::ExileFromTopUntil {
+                player: TargetFilter::Controller,
+                until: UntilCondition::NextMatches {
+                    filter: nonland_filter(),
+                },
+            },
+            vec![],
+            source,
+            PlayerId(0),
+        );
+        wrapped.player_scope = Some(PlayerFilter::All);
+        wrapped.sub_ability = Some(Box::new(choose_sub));
+
+        let mut events = Vec::new();
+        super::super::resolve_ability_chain(&mut state, &wrapped, &mut events, 0).unwrap();
+
+        // No picker pause — the single opponent gets the zone choice directly.
+        match &state.waiting_for {
+            WaitingFor::ChooseFromZoneChoice { player, .. } => {
+                assert_eq!(
+                    *player,
+                    PlayerId(1),
+                    "the lone opponent must be the chooser without a picker pause"
+                );
+            }
+            other => panic!(
+                "expected a direct ChooseFromZoneChoice with one opponent, got {other:?}"
+            ),
         }
     }
 

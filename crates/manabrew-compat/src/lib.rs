@@ -1711,6 +1711,9 @@ pub fn convert_available_action(action: &GameAction, id: String) -> AvailableAct
         GameAction::ChooseClashOpponent { .. } => {
             AvailableActionConversion::Unsupported("local.clash-unsupported")
         }
+        GameAction::ChooseZoneOpponentChooser { .. } => {
+            AvailableActionConversion::Unsupported("local.zone-opponent-chooser-unsupported")
+        }
         GameAction::ChooseAnnouncingOpponent { .. } => {
             AvailableActionConversion::Unsupported("local.announcing-opponent-unsupported")
         }

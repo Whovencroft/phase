@@ -90,9 +90,143 @@ pub fn resolve(
 
     let clamped_count = count.min(cards.len());
 
-    // CR 608.2d: Determine who makes the choice.
+    // CR 608.2d: Determine who makes the choice. For `Chooser::Opponent` in a
+    // multiplayer game with two or more live opponents (and no pre-targeted
+    // opponent), the CONTROLLER first decides which opponent will make the
+    // choice — "an opponent" is the controller's pick, exactly like clash's
+    // opponent selection (CR 701.30b) and the pile-separation prompt (CR
+    // 608.2d; `SeparatePilesChooseOpponent`). Plargg and Nassari's release
+    // notes state the intent directly: "you choose which opponent gets to
+    // choose one of the exiled nonland cards." Pausing on a typed prompt keeps
+    // the decision out of APNAP defaults; the handler re-enters through
+    // `resolve_with_choosing_player` with the picked opponent.
+    if matches!(chooser, Chooser::Opponent) && !has_targeted_opponent(ability) {
+        let candidates: Vec<PlayerId> = players::opponents(state, ability.controller)
+            .into_iter()
+            .filter(|&p| {
+                state
+                    .players
+                    .iter()
+                    .any(|pl| pl.id == p && !pl.is_eliminated)
+            })
+            .collect();
+        if candidates.len() >= 2 {
+            state.waiting_for = WaitingFor::ChooseFromZoneOpponentChooser {
+                player: ability.controller,
+                candidates,
+                ability: Box::new(ability.clone()),
+            };
+            events.push(GameEvent::EffectResolved {
+                kind: EffectKind::ChooseFromZone,
+                source_id: ability.source_id,
+                subject: None,
+            });
+            return Ok(());
+        }
+    }
     let choosing_player = resolve_chooser(state, ability, chooser);
+    present_zone_choice(
+        state,
+        ability,
+        cards,
+        clamped_count,
+        up_to,
+        constraint,
+        choosing_player,
+        events,
+    )
+}
 
+/// CR 608.2d: Re-entry point for the `ChooseFromZoneOpponentChooser` handler —
+/// the controller has picked which opponent makes the choice, so present the
+/// standard `ChooseFromZoneChoice` prompt directly to that opponent. The
+/// candidate pool is re-derived from live state (it cannot have changed while
+/// paused — pauses do not pass priority — but re-deriving keeps a single
+/// source of truth).
+pub(crate) fn resolve_with_choosing_player(
+    state: &mut GameState,
+    ability: &ResolvedAbility,
+    choosing_player: PlayerId,
+    events: &mut Vec<GameEvent>,
+) -> Result<(), EffectError> {
+    let (count, zone, additional_zones, zone_owner, filter, up_to, constraint) =
+        match &ability.effect {
+            Effect::ChooseFromZone {
+                count,
+                zone,
+                additional_zones,
+                zone_owner,
+                filter,
+                up_to,
+                constraint,
+                ..
+            } => (
+                *count as usize,
+                *zone,
+                additional_zones.clone(),
+                *zone_owner,
+                filter.clone(),
+                *up_to,
+                constraint.clone(),
+            ),
+            _ => return Err(EffectError::MissingParam("ChooseFromZone".to_string())),
+        };
+    let cards = resolve_candidate_cards(
+        state,
+        ability,
+        zone,
+        &additional_zones,
+        zone_owner,
+        filter.as_ref(),
+    )?;
+    // CR 608.2d: The pool can only have shrunk to empty if state changed while
+    // paused (it cannot — see above), but fail closed identically to `resolve`.
+    if cards.is_empty() || count == 0 {
+        state.last_parent_target_missing_reason = Some(ParentTargetMissingReason::ChooseFromZone);
+        events.push(GameEvent::EffectResolved {
+            kind: EffectKind::ChooseFromZone,
+            source_id: ability.source_id,
+            subject: None,
+        });
+        return Ok(());
+    }
+    let clamped_count = count.min(cards.len());
+    present_zone_choice(
+        state,
+        ability,
+        cards,
+        clamped_count,
+        up_to,
+        constraint,
+        choosing_player,
+        events,
+    )
+}
+
+/// CR 601.2c: "target opponent chooses" pre-binds the chooser at announcement —
+/// a `Player` target other than the controller occupies the chooser slot, so no
+/// resolution-time opponent selection happens.
+fn has_targeted_opponent(ability: &ResolvedAbility) -> bool {
+    ability
+        .targets
+        .iter()
+        .any(|t| matches!(t, TargetRef::Player(id) if *id != ability.controller))
+}
+
+/// CR 608.2: Park the interactive `ChooseFromZoneChoice` prompt for
+/// `choosing_player`, preserving the resolving trigger context for the parked
+/// continuation (shared tail of `resolve` and `resolve_with_choosing_player`).
+#[allow(clippy::too_many_arguments)]
+fn present_zone_choice(
+    state: &mut GameState,
+    ability: &ResolvedAbility,
+    cards: Vec<ObjectId>,
+    clamped_count: usize,
+    up_to: bool,
+    constraint: Option<ChooseFromZoneConstraint>,
+    choosing_player: PlayerId,
+    events: &mut Vec<GameEvent>,
+) -> Result<(), EffectError> {
     // CR 608.2: An ability's resolution is a single ongoing process. This
     // interactive pause makes `stack::resolve_top` run to completion and
     // unconditionally clear the live, resolution-scoped trigger context; preserve

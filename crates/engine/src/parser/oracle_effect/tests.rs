@@ -39504,26 +39504,41 @@ fn plargg_and_nassari_full_trigger_chain_choose_then_cast_others() {
         .sub_ability
         .as_ref()
         .expect("the cast tail must nest under the choose");
-    let Effect::CastFromZone {
-        ref target,
-        without_paying_mana_cost,
-        ..
+    let Effect::FreeCastFromZones {
+        count: cast_count,
+        ref filter,
+        ref zones,
+        max_total_mv,
+        exile_instead_of_graveyard,
     } = *cast.effect
     else {
-        panic!("expected CastFromZone tail, got {:?}", cast.effect);
+        panic!("expected FreeCastFromZones tail, got {:?}", cast.effect);
     };
-    assert!(without_paying_mana_cost, "free-cast rider must survive");
-    let TargetFilter::And { filters: ref cf } = *target else {
-        panic!("expected And cast target, got {target:?}");
+    assert_eq!(
+        cast_count, 2,
+        "CR 601.2 + ruling 2021-04-16: the \"up to two\" bound must be carried"
+    );
+    assert_eq!(*zones, vec![Zone::Exile]);
+    assert_eq!(max_total_mv, None);
+    assert!(!exile_instead_of_graveyard);
+    let TargetFilter::And { filters: ref cf } = *filter else {
+        panic!("expected And cast filter, got {filter:?}");
     };
-    assert!(cf.contains(&TargetFilter::ExiledBySource));
+    assert!(
+        cf.contains(&TargetFilter::ExiledBySource),
+        "CR 607.2a: the window pool must stay inside the linked-exile set"
+    );
     assert!(
         cf.iter().any(|f| matches!(
             f,
             TargetFilter::Typed(tf)
-                if tf.properties.contains(&FilterProp::Another)
+                if tf.properties.iter().any(|p| matches!(
+                    p,
+                    FilterProp::Not { prop }
+                        if matches!(**prop, FilterProp::InTrackedSet { .. })
+                ))
         )),
-        "\"the OTHER cards\" must carry FilterProp::Another"
+        "\"the OTHER cards\" must exclude the opponent's pick via Not(InTrackedSet)"
     );
 }
 
