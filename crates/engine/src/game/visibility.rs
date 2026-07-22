@@ -4805,6 +4805,7 @@ mod tests {
                 filter: crate::types::ability::TargetFilter::Any,
                 zones: vec![Zone::Graveyard, Zone::Hand],
                 exile_instead_of_graveyard: true,
+                source: crate::types::game_state::zero_object_id(),
             },
         };
 

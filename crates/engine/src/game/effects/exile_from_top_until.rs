@@ -1063,9 +1063,7 @@ mod tests {
         // first be asked which opponent makes the choice.
         let picker_candidates = match &state.waiting_for {
             WaitingFor::ChooseFromZoneOpponentChooser {
-                player,
-                candidates,
-                ..
+                player, candidates, ..
             } => {
                 assert_eq!(
                     *player,
@@ -1236,9 +1234,9 @@ mod tests {
                     "the lone opponent must be the chooser without a picker pause"
                 );
             }
-            other => panic!(
-                "expected a direct ChooseFromZoneChoice with one opponent, got {other:?}"
-            ),
+            other => {
+                panic!("expected a direct ChooseFromZoneChoice with one opponent, got {other:?}")
+            }
         }
     }
 
