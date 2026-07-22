@@ -3107,6 +3107,15 @@ pub enum ResolutionCastSuccessAction {
         /// read it).
         #[serde(default = "super::game_state::zero_object_id")]
         source: super::identifiers::ObjectId,
+        /// CR 607.2a + CR 608.2g: THIS resolution's "exiled this way" batch,
+        /// threaded from the window that offered the cast so the re-offer's
+        /// candidate set stays confined to the current resolution's exile
+        /// batch (Plargg and Nassari) rather than the source's complete live
+        /// linked-exile ledger. Empty means "no batch restriction" (Invoke
+        /// Calamity's graveyard/hand window; saved states predating the
+        /// field).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        member_pool: Vec<super::identifiers::ObjectId>,
     },
 }
 

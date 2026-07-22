@@ -6884,6 +6884,20 @@ pub enum CastOfferKind {
         /// the field (graveyard/hand windows never read it).
         #[serde(default = "zero_object_id")]
         source: ObjectId,
+        /// CR 607.2a + CR 608.2g: THIS resolution's "exiled this way" batch —
+        /// the concrete member pool the preceding `ChooseFromZone` offered,
+        /// captured when its answer settled. `ExiledBySource` alone reads the
+        /// source's complete LIVE linked-exile ledger, so after an earlier
+        /// resolution left a linked nonland card in exile the next window
+        /// would wrongly offer that stale card; intersecting the offer with
+        /// this pool (before the `Not(InTrackedSet)` chosen-card exclusion)
+        /// confines it to "the other cards exiled this way" of the CURRENT
+        /// resolution (Plargg and Nassari). Empty means "no batch restriction"
+        /// — windows without a choose-linked batch (Invoke Calamity's
+        /// graveyard/hand window) and saved states predating the field keep
+        /// the unrestricted behavior.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        member_pool: Vec<ObjectId>,
     },
     /// CR 608.2g + CR 609.4b: A during-resolution PAID cast of a single card
     /// from a graveyard (Quistis Trepe, Tinybones the Pickpocket: "you may cast

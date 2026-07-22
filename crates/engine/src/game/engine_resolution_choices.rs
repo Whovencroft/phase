@@ -1964,6 +1964,7 @@ pub(super) fn handle_resolution_choice(
                         zones,
                         exile_instead_of_graveyard,
                         source,
+                        member_pool,
                     },
             },
             GameAction::FreeCastWindowChoice { selection },
@@ -2018,6 +2019,7 @@ pub(super) fn handle_resolution_choice(
                         zones,
                         exile_instead_of_graveyard,
                         source,
+                        member_pool,
                     },
             };
             let result = casting::initiate_cast_during_resolution(
@@ -3834,6 +3836,27 @@ pub(super) fn handle_resolution_choice(
             if let Some(frame) = state.active_ability_continuation_frame_mut() {
                 let cont = &mut frame.pending;
                 cont.chain.targets = chosen.iter().map(|&id| TargetRef::Object(id)).collect();
+                // CR 607.2a + CR 608.2g: A `FreeCastFromZones` continuation
+                // over "the other cards exiled this way" (Plargg and Nassari)
+                // must confine its offer to THIS resolution's exile batch. The
+                // choose's offered pool (`cards`) IS that typed, concrete
+                // batch — it was derived from the chain's tracked set the
+                // exile clause published within this resolution — so forward
+                // the FULL pool (not just `chosen`) as the window head's
+                // object targets; the resolver reads them as its member pool
+                // and intersects the exile-zone scan with it BEFORE the
+                // filter's `Not(InTrackedSet)` chosen-card exclusion. Without
+                // this, `ExiledBySource` alone reads the source's complete
+                // live linked-exile ledger and a linked nonland card left in
+                // exile by a PREVIOUS resolution would be wrongly offered. The
+                // window never reads `ParentTarget`, so overriding the generic
+                // `targets = chosen` forward is safe for this head.
+                if matches!(
+                    cont.chain.effect,
+                    crate::types::ability::Effect::FreeCastFromZones { .. }
+                ) {
+                    cont.chain.targets = cards.iter().map(|&id| TargetRef::Object(id)).collect();
+                }
                 // CR 700.2 + CR 608.2c: The "unchosen" partition is forwarded
                 // to the sub-ability ONLY for the zone-partition pattern
                 // (`ChooseFromZone`: chosen cards go one place, the rest go

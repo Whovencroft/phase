@@ -1481,6 +1481,13 @@ export type CastOfferKind =
       filter: TargetFilter;
       zones: Zone[];
       exile_instead_of_graveyard?: boolean;
+      // CR 406.6: source of the granting ability (engine serde-default;
+      // absent in payloads predating the field).
+      source?: ObjectId;
+      // CR 607.2a: THIS resolution's "exiled this way" batch (Plargg and
+      // Nassari); omitted when empty (no batch restriction). Display-only
+      // pass-through — the modal renders `candidates`.
+      member_pool?: ObjectId[];
     };
 
 // CR 103.5b: Which declare-point action a pending BottomCards obligation

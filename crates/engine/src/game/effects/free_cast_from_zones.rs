@@ -55,6 +55,24 @@ pub fn resolve(
         return Err(EffectError::PlayerNotFound);
     }
 
+    // CR 607.2a + CR 608.2g: When this window is the continuation of a
+    // `ChooseFromZone` over "cards exiled this way" (Plargg and Nassari), the
+    // answer handler forwards the choose's FULL candidate pool — THIS
+    // resolution's typed exile batch — as this ability's object targets. That
+    // concrete member pool confines the offer to the current resolution's
+    // batch: `ExiledBySource` alone reads the source's complete live
+    // linked-exile ledger, which would wrongly re-offer a linked nonland card
+    // left in exile by a PREVIOUS resolution. Empty (Invoke Calamity's
+    // graveyard/hand window — no choose head) means no batch restriction.
+    let member_pool: Vec<ObjectId> = ability
+        .targets
+        .iter()
+        .filter_map(|t| match t {
+            crate::types::ability::TargetRef::Object(id) => Some(*id),
+            _ => None,
+        })
+        .collect();
+
     let candidates = eligible_candidates(
         state,
         controller,
@@ -62,6 +80,7 @@ pub fn resolve(
         &filter,
         &zones,
         max_total_mv,
+        &member_pool,
     );
 
     events.push(GameEvent::EffectResolved {
@@ -88,6 +107,7 @@ pub fn resolve(
             zones,
             exile_instead_of_graveyard,
             source: ability.source_id,
+            member_pool,
         },
     };
 
@@ -103,6 +123,13 @@ pub fn resolve(
 /// `ExiledBySource` (Plargg and Nassari's "the other cards exiled this way")
 /// resolve their exile links against it, so the real id must be threaded
 /// rather than a sentinel.
+///
+/// `member_pool`, when non-empty, is THIS resolution's concrete "exiled this
+/// way" batch (the pool the preceding `ChooseFromZone` offered): candidates
+/// must belong to it, applied BEFORE the filter's `Not(InTrackedSet)`
+/// chosen-card exclusion so a stale linked card from a previous resolution is
+/// never offered (CR 607.2a — "the other cards exiled this way" is scoped to
+/// this resolution's exile batch). Empty means no batch restriction.
 pub(crate) fn eligible_candidates(
     state: &GameState,
     controller: PlayerId,
@@ -110,6 +137,7 @@ pub(crate) fn eligible_candidates(
     filter: &TargetFilter,
     zones: &[Zone],
     max_total_mv: Option<u32>,
+    member_pool: &[ObjectId],
 ) -> Vec<ObjectId> {
     let Some(player) = state.players.iter().find(|p| p.id == controller) else {
         return Vec::new();
@@ -133,6 +161,12 @@ pub(crate) fn eligible_candidates(
             _ => continue,
         };
         for &id in zone_ids {
+            // CR 607.2a: Confine the offer to THIS resolution's exile batch
+            // before any other narrowing — a card linked by a previous
+            // resolution is not among "the cards exiled this way" now.
+            if !member_pool.is_empty() && !member_pool.contains(&id) {
+                continue;
+            }
             // CR 305.1: a land card can never be cast — this window is a cast
             // grant, so lands are excluded from the offer outright (mirrors
             // `cast_from_zone`'s cast-mode land guard).
@@ -240,6 +274,7 @@ mod tests {
             &instant_sorcery_filter(),
             &[Zone::Graveyard, Zone::Hand],
             None,
+            &[],
         );
         assert!(candidates.contains(&gy_instant));
         assert!(candidates.contains(&hand_sorcery));
@@ -271,6 +306,7 @@ mod tests {
             &instant_sorcery_filter(),
             &[Zone::Graveyard, Zone::Hand],
             Some(6),
+            &[],
         );
         assert_eq!(candidates, vec![cheap]);
     }
@@ -302,6 +338,7 @@ mod tests {
             &instant_sorcery_filter(),
             &[Zone::Graveyard, Zone::Hand],
             None,
+            &[],
         );
         assert_eq!(candidates, vec![mine]);
     }

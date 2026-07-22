@@ -1167,6 +1167,198 @@ mod tests {
         }
     }
 
+    /// CR 607.2a two-upkeep regression: "exiled this way" is scoped to THIS
+    /// trigger resolution, not the source's lifetime linked-exile ledger. A
+    /// linked nonland card left in exile by a PREVIOUS resolution (declined
+    /// free cast) must appear in NEITHER the next resolution's opponent choice
+    /// pool NOR its free-cast window — `ExiledBySource` alone is the source's
+    /// complete live ledger, so without the resolution-scoped member pool the
+    /// second window would wrongly offer the first upkeep's leftover.
+    #[test]
+    fn plargg_second_resolution_excludes_previous_resolutions_leftovers() {
+        use crate::types::ability::{CardSelectionMode, Chooser, ZoneOwner};
+        use crate::types::game_state::{CastOfferKind, WaitingFor};
+        let mut state = GameState::new_two_player(11);
+        let source = create_object(
+            &mut state,
+            CardId(100),
+            PlayerId(0),
+            "Plargg and Nassari".to_string(),
+            Zone::Battlefield,
+        );
+
+        // The full sentence-2 + sentence-3 chain, rebuilt per resolution the
+        // way the trigger system re-instantiates the ability each upkeep.
+        let build_chain = |source: ObjectId| -> ResolvedAbility {
+            let cast_sub = ResolvedAbility::new(
+                Effect::FreeCastFromZones {
+                    count: 2,
+                    max_total_mv: None,
+                    filter: TargetFilter::And {
+                        filters: vec![
+                            TargetFilter::ExiledBySource,
+                            TargetFilter::Typed(
+                                TypedFilter::default()
+                                    .with_type(TypeFilter::Card)
+                                    .properties(vec![
+                                        FilterProp::Not {
+                                            prop: Box::new(FilterProp::InTrackedSet {
+                                                id: crate::types::identifiers::TrackedSetId(0),
+                                            }),
+                                        },
+                                        FilterProp::InZone { zone: Zone::Exile },
+                                    ]),
+                            ),
+                        ],
+                    },
+                    zones: vec![Zone::Exile],
+                    exile_instead_of_graveyard: false,
+                },
+                vec![],
+                source,
+                PlayerId(0),
+            );
+            let mut choose_sub = ResolvedAbility::new(
+                Effect::ChooseFromZone {
+                    count: 1,
+                    zone: Zone::Exile,
+                    additional_zones: vec![],
+                    zone_owner: ZoneOwner::AllOwners,
+                    filter: Some(TargetFilter::And {
+                        filters: vec![nonland_filter(), TargetFilter::ExiledBySource],
+                    }),
+                    chooser: Chooser::Opponent,
+                    up_to: false,
+                    selection: CardSelectionMode::Chosen,
+                    constraint: None,
+                },
+                vec![],
+                source,
+                PlayerId(0),
+            );
+            choose_sub.sub_ability = Some(Box::new(cast_sub));
+            let mut wrapped = ResolvedAbility::new(
+                Effect::ExileFromTopUntil {
+                    player: TargetFilter::Controller,
+                    until: UntilCondition::NextMatches {
+                        filter: nonland_filter(),
+                    },
+                },
+                vec![],
+                source,
+                PlayerId(0),
+            );
+            wrapped.player_scope = Some(PlayerFilter::All);
+            wrapped.sub_ability = Some(Box::new(choose_sub));
+            wrapped
+        };
+
+        // UPKEEP 1 — each library holds one nonland hit.
+        let p0_old = add_library_card(&mut state, PlayerId(0), "P0 Old Beast", false);
+        state.players[0].library = crate::im::vector![p0_old];
+        let p1_old = add_library_card(&mut state, PlayerId(1), "P1 Old Goblin", false);
+        state.players[1].library = crate::im::vector![p1_old];
+
+        let mut events = Vec::new();
+        super::super::resolve_ability_chain(&mut state, &build_chain(source), &mut events, 0)
+            .unwrap();
+
+        // The lone opponent chooses P1's old Goblin; the window then offers
+        // ONLY P0's old Beast (the other card exiled this way).
+        apply(
+            &mut state,
+            PlayerId(1),
+            GameAction::SelectCards {
+                cards: vec![p1_old],
+            },
+        )
+        .unwrap();
+        match &state.waiting_for {
+            WaitingFor::CastOffer {
+                kind: CastOfferKind::FreeCastWindow { candidates, .. },
+                ..
+            } => assert_eq!(
+                candidates,
+                &vec![p0_old],
+                "upkeep 1 window offers the other card exiled this way"
+            ),
+            other => panic!("expected upkeep-1 FreeCastWindow, got {other:?}"),
+        }
+        // The controller DECLINES — the linked, uncast Beast stays in exile
+        // ("If you don't, it remains exiled" has no cleanup for this shape),
+        // so the source's live exile-link ledger still carries it.
+        apply(
+            &mut state,
+            PlayerId(0),
+            GameAction::FreeCastWindowChoice { selection: None },
+        )
+        .unwrap();
+        assert_eq!(
+            state.objects[&p0_old].zone,
+            Zone::Exile,
+            "the declined card must remain exiled (and linked) after upkeep 1"
+        );
+
+        // UPKEEP 2 — fresh libraries, fresh hits, the same source re-resolves.
+        let p0_new = add_library_card(&mut state, PlayerId(0), "P0 New Wurm", false);
+        state.players[0].library = crate::im::vector![p0_new];
+        let p1_new = add_library_card(&mut state, PlayerId(1), "P1 New Orc", false);
+        state.players[1].library = crate::im::vector![p1_new];
+
+        let mut events2 = Vec::new();
+        super::super::resolve_ability_chain(&mut state, &build_chain(source), &mut events2, 0)
+            .unwrap();
+
+        // The opponent's choice pool is THIS resolution's batch only — the
+        // first upkeep's leftovers are linked to the source but were not
+        // "exiled this way" now.
+        let offered = match &state.waiting_for {
+            WaitingFor::ChooseFromZoneChoice { player, cards, .. } => {
+                assert_eq!(*player, PlayerId(1));
+                cards.clone()
+            }
+            other => panic!("expected upkeep-2 ChooseFromZoneChoice, got {other:?}"),
+        };
+        let mut offered_sorted = offered;
+        offered_sorted.sort();
+        let mut expected = vec![p0_new, p1_new];
+        expected.sort();
+        assert_eq!(
+            offered_sorted, expected,
+            "upkeep-2 choice pool must exclude upkeep-1 leftovers"
+        );
+
+        // The opponent chooses P1's new Orc; the window must offer ONLY P0's
+        // new Wurm. Without the resolution-scoped member pool, the stale
+        // still-linked Beast from upkeep 1 would pass `ExiledBySource` +
+        // `Not(InTrackedSet)` and be wrongly offered here.
+        apply(
+            &mut state,
+            PlayerId(1),
+            GameAction::SelectCards {
+                cards: vec![p1_new],
+            },
+        )
+        .unwrap();
+        match &state.waiting_for {
+            WaitingFor::CastOffer {
+                kind: CastOfferKind::FreeCastWindow { candidates, .. },
+                ..
+            } => {
+                assert!(
+                    !candidates.contains(&p0_old),
+                    "upkeep-2 window must NOT offer upkeep 1's leftover (stale ledger)"
+                );
+                assert_eq!(
+                    candidates,
+                    &vec![p0_new],
+                    "upkeep-2 window offers exactly this resolution's other hit"
+                );
+            }
+            other => panic!("expected upkeep-2 FreeCastWindow, got {other:?}"),
+        }
+    }
+
     /// CR 608.2d two-player regression: with exactly ONE live opponent there is
     /// nothing for the controller to decide, so the opponent-picker pause must
     /// be skipped and the zone choice presented directly to that opponent.

@@ -4256,7 +4256,16 @@ fn effect_references_tracked_set(effect: &Effect) -> bool {
     // card, so a chained free-cast window must trigger publication of the
     // chosen card as the fresh tracked set.
     if let Effect::FreeCastFromZones { filter, .. } = effect {
-        if filter_references_tracked_set(filter) {
+        // CR 608.2c: the chosen-card exclusion is `FilterProp::Not {
+        // InTrackedSet }` INSIDE the typed leg of an `And` ("the OTHER cards
+        // exiled this way"), which the whole-filter walk above cannot see —
+        // without the property-level walk the choose head never publishes the
+        // chosen card as the fresh chain set, the `InTrackedSet(0)` sentinel
+        // stays bound to the exile-batch set, and `Not` over the batch empties
+        // the window (Plargg and Nassari's cast offer silently skipped).
+        if filter_references_tracked_set(filter)
+            || filter_properties_reference_tracked_membership(filter)
+        {
             return true;
         }
     }
@@ -4381,6 +4390,41 @@ fn filter_properties_reference_tracked_quantity(filter: &TargetFilter) -> bool {
         TargetFilter::Or { filters } | TargetFilter::And { filters } => filters
             .iter()
             .any(filter_properties_reference_tracked_quantity),
+        _ => false,
+    }
+}
+
+/// CR 608.2c: A filter whose typed properties test tracked-set MEMBERSHIP
+/// (`FilterProp::InTrackedSet`, alone or under `Not`/`AnyOf` — Plargg and
+/// Nassari's "the other cards exiled this way" is `Not(InTrackedSet)` inside
+/// the typed leg of an `And`) consumes the chain tracked set even though the
+/// filter is not a bare `TrackedSet`/`TrackedSetFiltered` reference. Mirrors
+/// `filter_properties_reference_tracked_quantity` for the membership axis.
+fn filter_properties_reference_tracked_membership(filter: &TargetFilter) -> bool {
+    match filter {
+        TargetFilter::Typed(tf) => tf
+            .properties
+            .iter()
+            .any(filter_prop_references_tracked_membership),
+        TargetFilter::Not { filter } => filter_properties_reference_tracked_membership(filter),
+        TargetFilter::Or { filters } | TargetFilter::And { filters } => filters
+            .iter()
+            .any(filter_properties_reference_tracked_membership),
+        _ => false,
+    }
+}
+
+/// CR 608.2c: Membership predicates at the property boundary — a bare
+/// `InTrackedSet`, or one nested under `Not` ("the other cards") / `AnyOf`.
+fn filter_prop_references_tracked_membership(prop: &crate::types::ability::FilterProp) -> bool {
+    match prop {
+        crate::types::ability::FilterProp::InTrackedSet { .. } => true,
+        crate::types::ability::FilterProp::AnyOf { props } => {
+            props.iter().any(filter_prop_references_tracked_membership)
+        }
+        crate::types::ability::FilterProp::Not { prop } => {
+            filter_prop_references_tracked_membership(prop)
+        }
         _ => false,
     }
 }
