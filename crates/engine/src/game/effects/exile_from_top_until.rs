@@ -1298,6 +1298,14 @@ mod tests {
             Zone::Exile,
             "the declined card must remain exiled (and linked) after upkeep 1"
         );
+        assert!(
+            state
+                .exile_links
+                .iter()
+                .any(|link| link.source_id == source && link.exiled_id == p0_old),
+            "the declined card must remain linked to the source after upkeep 1 \u{2014} \
+             upkeep 2's exclusion is only meaningful if the stale link still exists"
+        );
 
         // UPKEEP 2 — fresh libraries, fresh hits, the same source re-resolves.
         let p0_new = add_library_card(&mut state, PlayerId(0), "P0 New Wurm", false);

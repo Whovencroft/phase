@@ -2567,7 +2567,7 @@ pub(super) fn handle_resolution_choice(
         }
         (
             WaitingFor::ChooseFromZoneOpponentChooser {
-                player: _,
+                player,
                 candidates,
                 ability,
             },
@@ -2590,8 +2590,14 @@ pub(super) fn handle_resolution_choice(
             )
             .map_err(|e| EngineError::InvalidAction(format!("{e:?}")))?;
             // With an empty pool the choose completed without a new pause —
-            // drain the parked continuation like a settled zone choice.
+            // hand priority back to the controller (mirroring the settled-clash
+            // arm above) so the parked continuation can actually drain: the
+            // drain helper is gated on `WaitingFor::Priority`, and without
+            // `set_priority` the stale opponent-chooser pause would wedge the
+            // resolution (CR 608.2d — the choice is skipped, not the rest of
+            // the ability).
             if !matches!(state.waiting_for, WaitingFor::ChooseFromZoneChoice { .. }) {
+                set_priority(state, player);
                 super::engine::resume_pending_continuation_if_priority(state, events)
                     .expect("a settled opponent-chooser pick must resume its continuation");
             }

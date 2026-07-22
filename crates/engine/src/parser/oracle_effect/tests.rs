@@ -39542,6 +39542,67 @@ fn plargg_and_nassari_full_trigger_chain_choose_then_cast_others() {
     );
 }
 
+/// Search for Survivors — "An opponent chooses a card at random in your
+/// graveyard." The bare, untargeted "an opponent" subject goes through the
+/// same `lower_subject_predicate_ast` chooser rebind that Plargg and Nassari
+/// exercises, so the sentence now lowers to a delegated random graveyard
+/// choose instead of the pre-rebind `Unimplemented` fall-through. This test
+/// claims that parse-diff entry deliberately.
+#[test]
+fn search_for_survivors_opponent_chooses_at_random_in_your_graveyard() {
+    let def = parse_effect_chain(
+        "an opponent chooses a card at random in your graveyard.",
+        AbilityKind::Spell,
+    );
+    let Effect::ChooseFromZone {
+        count,
+        ref zone,
+        ref chooser,
+        ref selection,
+        ..
+    } = *def.effect
+    else {
+        panic!("expected ChooseFromZone, got {:?}", def.effect);
+    };
+    assert_eq!(count, 1);
+    assert_eq!(
+        *zone,
+        Zone::Graveyard,
+        "\"in your graveyard\" names the zone"
+    );
+    assert_eq!(
+        *chooser,
+        Chooser::Opponent,
+        "CR 608.2d: the untargeted \"an opponent\" subject must rebind the chooser"
+    );
+    assert_eq!(
+        *selection,
+        crate::types::ability::CardSelectionMode::Random,
+        "CR 608.2d: \"at random\" must survive into the selection mode"
+    );
+}
+
+/// Forgotten Lore / Shrouded Lore — "Target opponent chooses a card in your
+/// graveyard." `parse_target` lowers "target opponent" to the same bare
+/// opponent filter as "an opponent", but the subject carries a target slot:
+/// the chooser is a chosen TARGET, not "an opponent of the controller's
+/// choice", and `Chooser::Opponent` cannot represent that binding. The
+/// chooser rebind is therefore gated on `subject.target.is_none()`, and the
+/// targeted form must keep its honest `Unimplemented` fall-through rather
+/// than silently collapsing the target identity.
+#[test]
+fn target_opponent_chooses_in_your_graveyard_keeps_honest_fall_through() {
+    let def = parse_effect_chain(
+        "target opponent chooses a card in your graveyard.",
+        AbilityKind::Spell,
+    );
+    assert!(
+        matches!(*def.effect, Effect::Unimplemented { ref name, .. } if name == "choose"),
+        "the targeted chooser form must stay on the honesty gate, got {:?}",
+        def.effect
+    );
+}
+
 #[test]
 fn parser_shape_evelyn_exiles_each_library_with_collection_counter_and_permission() {
     let def = parse_effect_chain(

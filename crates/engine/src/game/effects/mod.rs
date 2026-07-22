@@ -2429,6 +2429,15 @@ fn waits_for_resolution_choice(waiting_for: &WaitingFor) -> bool {
             | WaitingFor::PayCost { .. }
             | WaitingFor::RetargetChoice { .. }
             | WaitingFor::ChooseFromZoneChoice { .. }
+            // CR 608.2d + CR 608.2e: the controller's pick of WHICH opponent
+            // will make a `ChooseFromZone` selection is itself a resolution
+            // pause. The chained consumer (Plargg, Dean of Chaos's "you may
+            // cast up to two of the other exiled cards") must not resolve
+            // until the delegated pick round-trips — resolving it inline
+            // would read the pre-pick tracked-set state and compute an empty
+            // candidate pool — so the sub-ability chain auto-stashes here
+            // exactly like the `ChooseFromZoneChoice` pause it precedes.
+            | WaitingFor::ChooseFromZoneOpponentChooser { .. }
             | WaitingFor::ChooseOneOfBranch { .. }
             | WaitingFor::ReturnAsAuraTarget { .. }
             | WaitingFor::ChooseManaColor { .. }

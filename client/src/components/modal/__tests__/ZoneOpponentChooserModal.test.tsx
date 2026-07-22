@@ -25,11 +25,7 @@ function zoneOpponentChooserWaitingFor(): ZoneOpponentChooserWaitingFor {
 function renderModal(waitingFor: ZoneOpponentChooserWaitingFor) {
   const dispatch = vi.fn<(action: GameAction) => void>();
   render(
-    <ZoneOpponentChooserModalContent
-      waitingFor={waitingFor}
-      seatOrder={[0, 1, 2]}
-      dispatch={dispatch}
-    />,
+    <ZoneOpponentChooserModalContent waitingFor={waitingFor} dispatch={dispatch} />,
   );
   return dispatch;
 }
@@ -60,5 +56,23 @@ describe("ZoneOpponentChooserModalContent", () => {
       type: "ChooseZoneOpponentChooser",
       data: { opponent: 2 },
     });
+  });
+
+  it("renders candidates in the engine-supplied order", () => {
+    // Candidate ordering is game ordering and belongs to the engine — the
+    // client must not re-sort it. The fixture lists [2, 1]; the buttons must
+    // appear in exactly that order.
+    useMultiplayerStore.setState({
+      playerNames: new Map([
+        [1, "Alice"],
+        [2, "Bob"],
+      ]),
+    });
+    renderModal(zoneOpponentChooserWaitingFor());
+
+    const labels = screen
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(labels).toEqual(["Bob", "Alice"]);
   });
 });

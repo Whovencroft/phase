@@ -18605,14 +18605,27 @@ fn lower_subject_predicate_ast(
             // subject arms produce (subject.rs `parse_subject_application`) —
             // typed or property-carrying subjects fall through to the honesty
             // gate below.
+            //
+            // The targeted form ("target opponent chooses …" — Forgotten Lore,
+            // Shrouded Lore) is deliberately NOT rebound: `parse_target` lowers
+            // "target opponent" to the same bare opponent filter, but the
+            // subject then carries `target: Some(_)` — the chooser is bound to
+            // a chosen target slot, not "an opponent of the controller's
+            // choice", and `Chooser::Opponent` cannot represent that binding.
+            // Gating on `subject.target.is_none()` keeps those cards on the
+            // honesty gate below — the same fall-through the exiled-this-way
+            // anaphor keeps for its targeted form (imperative.rs
+            // `try_parse_choose_exiled_anaphor`).
             if let Effect::ChooseFromZone { chooser, .. } = &mut clause.effect {
-                if matches!(
-                    &subject.affected,
-                    TargetFilter::Typed(tf)
-                        if tf.controller == Some(ControllerRef::Opponent)
-                            && tf.type_filters.is_empty()
-                            && tf.properties.is_empty()
-                ) {
+                if subject.target.is_none()
+                    && matches!(
+                        &subject.affected,
+                        TargetFilter::Typed(tf)
+                            if tf.controller == Some(ControllerRef::Opponent)
+                                && tf.type_filters.is_empty()
+                                && tf.properties.is_empty()
+                    )
+                {
                     *chooser = crate::types::ability::Chooser::Opponent;
                     return clause;
                 }
@@ -20931,7 +20944,13 @@ fn try_parse_cast_effect(lower: &str, ctx: &ParseContext) -> Option<Effect> {
     // before the uncounted `parse_from_among_exiled_this_way` arm below so the
     // counted form wins; uncounted forms (Etali Primal Conqueror's "cast any
     // number") keep their existing lowering.
-    if mode == CardPlayMode::Cast && without_paying {
+    //
+    // CR 601.2 (strict-lowering rule): `Effect::FreeCastFromZones` carries no
+    // cast-constraint channel, so a parsed `constraint` (e.g. a timing rider)
+    // MUST NOT be silently dropped into an unconstrained window — gate this
+    // arm on `constraint.is_none()` and let constrained forms fall through to
+    // the arms that carry (or strictly reject) the constraint.
+    if mode == CardPlayMode::Cast && without_paying && constraint.is_none() {
         if let Some(effect) = try_parse_counted_free_cast_from_exiled_this_way(rest) {
             return Some(effect);
         }
