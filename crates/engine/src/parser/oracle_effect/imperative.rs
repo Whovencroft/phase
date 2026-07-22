@@ -3927,9 +3927,11 @@ fn try_parse_choose_owned_by_voter(
 /// (CR 608.2d override): the game selects, the controller does not.
 ///
 /// The chooser prefix follows `parse_choose_anaphoric`'s CR 608.2d convention:
-/// "an opponent chooses" / "target opponent chooses" → [`Chooser::Opponent`]
-/// (Plargg and Nassari: "An opponent chooses a nonland card exiled this way"),
-/// bare "choose" / "you choose" → [`Chooser::Controller`].
+/// "an opponent chooses" → [`Chooser::Opponent`] (Plargg and Nassari: "An
+/// opponent chooses a nonland card exiled this way"), bare "choose" /
+/// "you choose" → [`Chooser::Controller`]. The targeted form ("target
+/// opponent chooses") is not accepted — it must bind the chooser to the
+/// chosen target slot, so it falls through honestly.
 fn try_parse_choose_exiled_anaphor(lower: &str) -> Option<ChooseImperativeAst> {
     type E<'a> = OracleError<'a>;
 
@@ -3963,16 +3965,14 @@ fn try_parse_choose_exiled_anaphor(lower: &str) -> Option<ChooseImperativeAst> {
     // exiled this way") narrows the choice; the bare "a card" form leaves it
     // untyped. The type is intersected with the linked-exile set below.
     // CR 608.2d: "an opponent chooses" delegates the selection to an opponent
-    // (mirrors `parse_choose_anaphoric`'s chooser alternation).
+    // (mirrors `parse_choose_anaphoric`'s chooser alternation). The targeted
+    // form ("target opponent chooses") is deliberately NOT accepted here: it
+    // must bind the chooser to the chosen target slot, and no printed card
+    // pairs it with an "exiled this way" anaphor, so the fall-through stays
+    // honest rather than collapsing target identity into `Chooser::Opponent`.
     let (rest_after, (chooser, card_type)) = pair(
         alt((
-            value(
-                Chooser::Opponent,
-                alt((
-                    tag::<_, _, E>("an opponent chooses "),
-                    tag("target opponent chooses "),
-                )),
-            ),
+            value(Chooser::Opponent, tag::<_, _, E>("an opponent chooses ")),
             value(
                 Chooser::Controller,
                 alt((tag::<_, _, E>("you choose "), tag("choose "))),
